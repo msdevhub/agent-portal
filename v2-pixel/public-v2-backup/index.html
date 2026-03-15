@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🔬 Ottor's Research Lab</title>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- HUD Header -->
+  <header class="hud">
+    <div class="hud-left">
+      <span class="hud-logo">🔬</span>
+      <h1 class="hud-title">Ottor's Research Lab</h1>
+    </div>
+    <div class="hud-center" id="hud-stats">
+      <div class="hud-chip"><span class="chip-icon">📁</span><span class="chip-val" id="s-total">0</span><span class="chip-label">项目</span></div>
+      <div class="hud-chip chip-active"><span class="chip-icon">⚡</span><span class="chip-val" id="s-active">0</span><span class="chip-label">进行中</span></div>
+      <div class="hud-chip chip-done"><span class="chip-icon">✅</span><span class="chip-val" id="s-done">0</span><span class="chip-label">完成</span></div>
+    </div>
+    <button class="hud-btn" onclick="showCreateProject()">✨ 新项目</button>
+  </header>
+
+  <!-- Main: horizontal scrolling project lanes -->
+  <main class="lanes-container" id="lanes-container">
+    <div class="lanes" id="lanes">
+      <!-- Rendered by JS -->
+    </div>
+  </main>
+
+  <!-- Detail Drawer (right side) -->
+  <div id="drawer" class="drawer" style="display:none">
+    <div class="drawer-head">
+      <h3 id="drawer-title"></h3>
+      <button class="drawer-close" onclick="closeDrawer()">✕</button>
+    </div>
+    <div id="drawer-body" class="drawer-body"></div>
+  </div>
+
+  <!-- Modal -->
+  <div id="modal-bg" class="modal-bg" style="display:none" onclick="if(event.target===this)closeModal()">
+    <div class="modal-box">
+      <div class="modal-head"><span id="modal-title"></span><button onclick="closeModal()">✕</button></div>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

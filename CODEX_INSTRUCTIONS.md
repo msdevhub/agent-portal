@@ -1,126 +1,119 @@
-# Agent Portal 开发指令
+# Agent Portal 优化 — Wave 4: 研究工作台
 
-## 项目概述
-构建研究项目管理平台，用 Next.js 14 (App Router) + Tailwind CSS + Supabase。
+## 目标
+把 Agent Portal 从展示面板改成**研究管理工作台**。核心用户需求：
+1. 查看项目进度/状态/产出物 + **模型交互上下文和记忆**（最重要）
+2. 直接编辑产出内容/上下文/记忆文件
 
-## Supabase 连接
-**重要**: 此 Supabase 实例的 PostgREST REST API (`/rest/v1/`) 不可用（返回 404），所以**不能使用 `@supabase/supabase-js` 客户端**。
+## 前端改动 (v3-shadcn)
 
-替代方案：使用 Supabase 的 `/pg/query` 端点直接执行 SQL：
+### 1. Markdown 弹窗查看器/编辑器
+- 安装 `react-markdown` + `remark-gfm` + `rehype-raw`
+- 点击 `.md` 类型的产出物 → 弹窗全屏显示 Markdown 渲染内容
+- 弹窗右上角有"编辑"按钮，点击切换为 textarea 编辑模式
+- 编辑后点"保存"→ PUT `/api/doc/:slug/:path` 写回文件
+- 弹窗样式：暗色背景 `bg-[#0d1019]`，内容区白色文字，代码块有高亮背景
 
-```typescript
-// lib/db.ts
-const SUPABASE_URL = 'https://db.dora.restry.cn';
-const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJzZXJ2aWNlX3JvbGUiLAogICAgImlzcyI6ICJzdXBhYmFzZS1kZW1vIiwKICAgICJpYXQiOiAxNjQxNzY5MjAwLAogICAgImV4cCI6IDE3OTk1MzU2MDAKfQ.DaYlNEoUrrEn2Ig7tqibS-PHK5vgusbcbo7X36XVt4Q';
+### 2. 新增"上下文 & 记忆"区块（在项目详情面板里）
+这是最重要的功能。每个项目应该展示：
 
-export async function query<T = any>(sql: string): Promise<T[]> {
-  const res = await fetch(`${SUPABASE_URL}/pg/query`, {
-    method: 'POST',
-    headers: {
-      'apikey': SERVICE_KEY,
-      'Authorization': `Bearer ${SERVICE_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query: sql }),
-    cache: 'no-store',
-  });
-  if (!res.ok) throw new Error(`DB query failed: ${res.status}`);
-  return res.json();
-}
-```
+#### a. 工作区上下文文件
+从 `/api/context` 获取，展示：
+- `SOUL.md` — Agent 身份定义
+- `AGENTS.md` — 工作流程定义
+- `USER.md` — 用户信息
+- `HEARTBEAT.md` — 心跳周期配置
+- `TOOLS.md` — 工具说明
+- `IDENTITY.md` — 身份信息
 
-## 数据表（前缀 AP_，已创建，有数据）
+每个文件显示为一行，可点击打开 Markdown 弹窗查看/编辑。
 
-### AP_projects
-- id UUID PK
-- name TEXT
-- slug TEXT UNIQUE
-- description TEXT
-- status TEXT (active|completed|paused|archived)
-- stage TEXT (question|literature|hypothesis|poc|conclusion|report)
-- tags TEXT[]
-- agent_id TEXT
-- metadata JSONB
-- created_at TIMESTAMPTZ
-- updated_at TIMESTAMPTZ
+#### b. 记忆文件
+从 `/api/memory` 获取，展示 `memory/` 目录下的所有 `.md` 文件。
+按日期倒序排列，可点击打开查看/编辑。
 
-### AP_tasks
-- id UUID PK
-- project_id UUID FK -> AP_projects.id
-- title TEXT
-- description TEXT
-- stage TEXT
-- status TEXT (pending|in_progress|done|blocked)
-- priority INTEGER
-- notes TEXT
-- created_at TIMESTAMPTZ
-- updated_at TIMESTAMPTZ
+#### c. 项目 CONTEXT
+项目的 `CONTEXT.md` 是最重要的上下文，在每个项目详情顶部显示"项目上下文"按钮。
 
-### AP_documents (P1, exists but no data yet)
-### AP_activity_log (P1, exists but no data yet)
+### 3. UI 布局调整
+- 项目详情面板的区块顺序：
+  1. 研究阶段 & 产出物（已有，保持不变）
+  2. **上下文 & 记忆**（新增 — 最重要）
+  3. 阶段任务
+  4. 研究笔记
+  5. 研究时间线
+- `.custom-scrollbar` 样式已在 index.css 中定义
 
-## 页面结构
+## 后端改动 (v2-pixel/server.js)
+
+### 1. 新增 API 端点
 
 ```
-/                        → 仪表盘 (项目统计 + 项目卡片网格)
-/projects                → 项目列表 (跳转到 / 即可)
-/projects/new            → 新增项目表单
-/projects/[slug]         → 项目详情 (阶段进度条 + 任务列表)
-/projects/[slug]/edit    → 编辑项目
+GET  /api/context
+```
+返回工作区顶层 `.md` 文件列表：
+```json
+[
+  { "name": "SOUL.md", "path": "SOUL.md", "size": 1125, "mtime": "2026-03-10" },
+  ...
+]
 ```
 
-## 设计要求
+```
+GET  /api/memory
+```
+返回 `memory/` 目录下所有 `.md` 文件：
+```json
+[
+  { "name": "2026-03-13.md", "path": "memory/2026-03-13.md", "size": 4096, "mtime": "2026-03-13" },
+  ...
+]
+```
 
-### 主题: Catppuccin Mocha (暗色)
-- 背景: #11111b (base), #181825 (mantle), #1e1e2e (crust)
-- 文字: #cdd6f4 (text), #a6adc8 (subtext)
-- 蓝色: #89b4fa, 紫色: #cba6f7, 绿色: #a6e3a1, 黄色: #f9e2af, 红色: #f38ba8
-- 边框: #313244
+```
+GET  /api/workspace/:path
+```
+读取工作区任意文件内容（Markdown）。`path` 可以是 `SOUL.md` 或 `memory/2026-03-13.md`。
+返回纯文本 Markdown。
 
-### 全局布局
-- 左侧 Sidebar (可折叠, 200px):
-  - Logo: "🔬 Agent Portal"
-  - 导航: 仪表盘, 项目列表
-- 右侧: 内容区
+```
+PUT  /api/workspace/:path
+```
+写入文件内容。请求体 `{ "content": "..." }`。
+写入成功返回 `{ "ok": true }`。
 
-### 仪表盘 `/`
-- 顶部 3 个统计卡片: 总项目数 | 进行中 | 已完成
-- 项目卡片网格 (2-3列):
-  - 每张卡片: 项目名, 状态标签(彩色), 阶段进度条, 标签, 最后更新时间
-  - 点击进入详情
+同时也支持：
+```
+PUT  /api/doc/:slug/:path
+```
+写入项目目录下的文件。
 
-### 研究阶段进度条 (StageProgress 组件)
-6 个阶段: 提问 → 文献调研 → 假设 → POC验证 → 结论 → 报告
-- 已完成: 实心圆 + 蓝色连线
-- 当前: 脉冲动画圆
-- 未开始: 空心圆 + 灰色连线
+### 2. 环境变量
+- `WORKSPACE_ROOT` — 工作区根目录（默认 `../../..` 相对于 server.js）
 
-### 项目详情 `/projects/[slug]`
-- 顶部: 项目名 + 编辑按钮 + 状态标签
-- 阶段进度条
-- 任务列表:
-  - 任务卡片: 标题 + 状态标签 + 阶段 + 备注
-  - 可点击切换状态 (pending → in_progress → done)
-  - 新增任务按钮
-- 项目元数据: 标签, 创建时间, 技术栈
+## 约束
+- 保持暗色主题 (`bg-[#0a0b14]`)
+- 保持现有功能不变（项目 CRUD、任务、笔记、产出物）
+- 不要改变现有 API 的行为
+- TypeScript 必须通过 `npx tsc --noEmit`
+- 构建必须通过 `npx vite build`
+- Markdown 弹窗中编辑区用等宽字体
+- 代码最后通过以下验证：
+  ```bash
+  cd v3-shadcn && npx tsc --noEmit
+  cd v3-shadcn && npx vite build
+  node --check v2-pixel/server.js
+  ```
 
-### 新增项目 `/projects/new`
-- 表单: 名称, Slug(自动生成), 描述, 标签(多选), 初始阶段
-- 保存后跳转到详情页
-
-## 技术要求
-- Next.js 14 App Router (use `app/` directory)
-- TypeScript strict mode
-- Tailwind CSS (already in Next.js default setup)
-- Server Actions for data mutations (create/update)
-- Server Components for data fetching
-- No authentication needed (MVP internal tool)
-- Port: 18820 (set in package.json scripts)
-- 所有数据库操作使用 `lib/db.ts` 的 `query()` 函数
-- **不要使用 @supabase/supabase-js**
-
-## 注意事项
-- SQL 中表名必须用双引号: `"AP_projects"`, `"AP_tasks"`
-- 使用参数化查询防止 SQL 注入（或至少转义用户输入）
-- `tags` 列是 PostgreSQL TEXT[] 类型
-- `metadata` 列是 JSONB 类型
+## 文件结构
+```
+v3-shadcn/
+  src/
+    App.tsx           ← 主应用（大部分改动在这里）
+    lib/api.ts        ← API 调用函数
+    lib/constants.ts  ← 常量定义
+    lib/utils.ts      ← 工具函数
+    index.css         ← 全局样式（已有 custom-scrollbar）
+v2-pixel/
+  server.js           ← Express 后端（所有 API）
+```

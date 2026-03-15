@@ -1,2 +1,5 @@
-v2-pixel/.git
-v3-shadcn/.git
+node_modules/
+dist/
+.vite/
+*.log
+.DS_Store
