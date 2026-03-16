@@ -207,6 +207,11 @@ export function ProjectDetailPage({
     || artifactStageGroups[0]?.stage
     || stage
   const activeArtifacts = artifacts.filter((artifact) => artifact.stage === activeArtifactStage.id)
+
+  // Flat list grouped by type (for the new list view)
+  const artifactTypeGroups = ARTIFACT_TYPES
+    .map((item) => ({ type: item, artifacts: artifacts.filter((a) => a.type === item.id) }))
+    .filter((group) => group.artifacts.length > 0)
   const autoLoadedFiles = contextFiles.filter(isAutoLoadedContextFile)
   const visibleTimeline = getVisibleTimelineEvents(project.timeline || [])
 
@@ -455,36 +460,16 @@ export function ProjectDetailPage({
             <SectionHeading
               className="hidden sm:block"
               title="产出物"
-              subtitle="阶段切换改为可横向滚动的文本标签，文档仍支持页内 Markdown 预览。"
+              subtitle="按类型分组展示所有产出物，快速概览项目沉淀。"
             />
 
-            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex-1 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <div className="inline-flex min-w-full gap-2 sm:min-w-0">
-                  {artifactStageGroups.map((group) => (
-                    <button
-                      key={group.stage.id}
-                      type="button"
-                      onClick={() => setSelectedArtifactStage(group.stage.id)}
-                      className={cn(
-                        "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition sm:gap-2 sm:px-4 sm:py-2 sm:text-sm",
-                        activeArtifactStage.id === group.stage.id
-                          ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-200"
-                          : "border-zinc-700 bg-[#111113] text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
-                      )}
-                    >
-                      <span>{group.stage.label}</span>
-                      <span className="rounded-full bg-black/20 px-2 py-0.5 text-xs">{group.artifacts.length}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-zinc-400">共 {artifacts.length} 项</p>
               <button
                 type="button"
                 onClick={() => {
                   setAddingArtifact((value) => !value)
-                  setArtifactStage(activeArtifactStage.id)
+                  setArtifactStage(project.stage)
                 }}
                 className={ghostActionButtonClassName}
               >
@@ -543,26 +528,36 @@ export function ProjectDetailPage({
               </SurfaceCard>
             )}
 
-            {activeArtifacts.length === 0 ? (
+            {artifacts.length === 0 ? (
               <EmptyState
                 icon={<ScrollText className="h-5 w-5" />}
-                title={`${activeArtifactStage.label} 阶段还没有产出物`}
+                title="还没有产出物"
                 message="把文档、代码、数据、图片或外部链接沉淀进来，后续回看才有材料。"
-                actionLabel="为这个阶段添加产出物"
+                actionLabel="添加第一个产出物"
                 onAction={() => {
                   setAddingArtifact(true)
-                  setArtifactStage(activeArtifactStage.id)
+                  setArtifactStage(project.stage)
                 }}
               />
             ) : (
-              <div className="space-y-1.5 sm:space-y-3">
-                {activeArtifacts.map((artifact) => (
-                  <ArtifactRow
-                    key={artifact.id}
-                    artifact={artifact}
-                    onDelete={() => void handleDeleteArtifact(artifact.id)}
-                    onPreview={(target) => setMarkdownTarget(target)}
-                  />
+              <div className="space-y-4 sm:space-y-6">
+                {artifactTypeGroups.map((group) => (
+                  <div key={group.type.id}>
+                    <h3 className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-300 sm:mb-3">
+                      <span>{group.type.label}</span>
+                      <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">{group.artifacts.length}</span>
+                    </h3>
+                    <div className="space-y-1.5 sm:space-y-3">
+                      {group.artifacts.map((artifact) => (
+                        <ArtifactRow
+                          key={artifact.id}
+                          artifact={artifact}
+                          onDelete={() => void handleDeleteArtifact(artifact.id)}
+                          onPreview={(target) => setMarkdownTarget(target)}
+                        />
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
