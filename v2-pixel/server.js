@@ -3,6 +3,7 @@ const path = require('path');
 
 const app = express();
 const PORT = 18820;
+const MIME_TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 
 const SUPABASE_URL = 'https://db.dora.restry.cn';
 const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJzZXJ2aWNlX3JvbGUiLAogICAgImlzcyI6ICJzdXBhYmFzZS1kZW1vIiwKICAgICJpYXQiOiAxNjQxNzY5MjAwLAogICAgImV4cCI6IDE3OTk1MzU2MDAKfQ.DaYlNEoUrrEn2Ig7tqibS-PHK5vgusbcbo7X36XVt4Q';
@@ -572,7 +573,7 @@ const PROJECT_REGISTRY = {
   'agent-portal': {
     dir: 'agent-portal',
     deployments: [
-      { stage: 'build', title: 'Agent Portal 管理平台', type: 'link', url: 'https://project.dora.restry.cn/', description: '研究项目管理平台 — React + shadcn + Supabase' },
+      { stage: 'build', title: 'Agent Portal 管理平台', type: 'link', url: 'https://agent-project.clawlines.net/', description: '研究项目管理平台 — React + shadcn + Supabase' },
     ],
     keyDocs: [
       { path: 'CONTEXT.md', stage: 'build', title: '项目上下文', type: 'doc' },
@@ -919,7 +920,7 @@ app.post('/api/sync-workspace', async (req, res) => {
   }
 });
 
-app.get('/{*splat}', (req, res) => {
+app.get('*', (req, res) => {
   res.sendFile(path.join(STATIC_ROOT, 'index.html'));
 });
 
