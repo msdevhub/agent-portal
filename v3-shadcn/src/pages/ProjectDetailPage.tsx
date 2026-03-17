@@ -44,6 +44,7 @@ import {
   inputClassName,
   isAutoLoadedContextFile,
   isBehaviorRuleFile,
+  stripMarkdown,
   textareaClassName,
   type MarkdownPreviewTarget,
 } from "@/components/portal/shared"
@@ -88,7 +89,7 @@ export function ProjectDetailPage({
   const [artifactType, setArtifactType] = useState<Artifact["type"]>("doc")
   const [artifactUrl, setArtifactUrl] = useState("")
   const [artifactDescription, setArtifactDescription] = useState("")
-  const [selectedArtifactStage, setSelectedArtifactStage] = useState("")
+
   const [openTaskStage, setOpenTaskStage] = useState<string | null>(null)
   const [addingNote, setAddingNote] = useState(false)
   const [newNoteContent, setNewNoteContent] = useState("")
@@ -140,7 +141,6 @@ export function ProjectDetailPage({
     setArtifactType("doc")
     setArtifactUrl("")
     setArtifactDescription("")
-    setSelectedArtifactStage(project.stage)
     setAddingNote(false)
     setNewNoteContent("")
     setNewNoteType("finding")
@@ -200,20 +200,13 @@ export function ProjectDetailPage({
   const artifacts = project.artifacts || []
   const tasksDone = tasks.filter((task) => task.status === "done").length
   const taskCompletion = tasks.length > 0 ? Math.round((tasksDone / tasks.length) * 100) : 0
-  const artifactStageGroups = STAGES
-    .map((item) => ({ stage: item, artifacts: artifacts.filter((artifact) => artifact.stage === item.id) }))
-    .filter((group) => group.artifacts.length > 0 || group.stage.id === project.stage)
-  const activeArtifactStage = artifactStageGroups.find((group) => group.stage.id === selectedArtifactStage)?.stage
-    || artifactStageGroups[0]?.stage
-    || stage
-  const activeArtifacts = artifacts.filter((artifact) => artifact.stage === activeArtifactStage.id)
-
   // Flat list grouped by type (for the new list view)
   const artifactTypeGroups = ARTIFACT_TYPES
     .map((item) => ({ type: item, artifacts: artifacts.filter((a) => a.type === item.id) }))
     .filter((group) => group.artifacts.length > 0)
   const autoLoadedFiles = contextFiles.filter(isAutoLoadedContextFile)
   const visibleTimeline = getVisibleTimelineEvents(project.timeline || [])
+  const plainDescription = stripMarkdown(project.description || "")
 
   const openProjectEditor = () => {
     setDraftStatus(project.status)
@@ -340,7 +333,7 @@ export function ProjectDetailPage({
               </button>
             </div>
             <div className="space-y-1.5 sm:space-y-2">
-              <h1 className="truncate text-2xl font-semibold tracking-tight text-zinc-50 sm:text-4xl">{project.name}</h1>
+              <h1 className="truncate text-xl font-semibold tracking-tight text-zinc-50 sm:text-4xl">{project.name}</h1>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-400 sm:text-sm">
                   <span>{STATUS_LABELS[project.status] || project.status}</span>
@@ -358,9 +351,16 @@ export function ProjectDetailPage({
                   <Pencil className="h-4 w-4" />
                 </button>
               </div>
-              <p className="max-w-3xl line-clamp-1 text-sm text-zinc-500">
-                {project.description || "暂无项目说明。"}
+              <p className="hidden max-w-3xl line-clamp-1 text-sm text-zinc-500 sm:block">
+                {plainDescription || "暂无项目说明。"}
               </p>
+              <div className="flex items-center gap-3 text-xs text-zinc-400 sm:hidden">
+                <span>{stage.icon} {stage.label}</span>
+                <span className="text-zinc-600">·</span>
+                <span>{progress}%</span>
+                <span className="text-zinc-600">·</span>
+                <span>{tasksDone}/{tasks.length} 已完成</span>
+              </div>
             </div>
             <div className="hidden gap-3 sm:grid sm:grid-cols-3">
               <CompactMetric label="当前阶段" value={`${stage.icon} ${stage.label}`} tone="zinc" />
@@ -373,7 +373,7 @@ export function ProjectDetailPage({
 
       <div className="space-y-3 sm:space-y-6">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
+          <TabsList className="w-full justify-start">
             <TabsTrigger value="tasks">任务</TabsTrigger>
             <TabsTrigger value="artifacts">产出物</TabsTrigger>
             <TabsTrigger value="context">上下文</TabsTrigger>
@@ -547,7 +547,7 @@ export function ProjectDetailPage({
                       <span>{group.type.label}</span>
                       <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">{group.artifacts.length}</span>
                     </h3>
-                    <div className="space-y-1.5 sm:space-y-3">
+                    <div className="space-y-2 sm:space-y-3">
                       {group.artifacts.map((artifact) => (
                         <ArtifactRow
                           key={artifact.id}
@@ -745,7 +745,7 @@ export function ProjectDetailPage({
         </Tabs>
       </div>
 
-      <footer className="mt-auto flex flex-col gap-2 border-t border-zinc-800/80 pt-5 text-xs text-zinc-500 sm:flex-row sm:items-center sm:justify-between">
+      <footer className="mt-auto flex flex-col gap-1 border-t border-zinc-800/80 pt-5 text-xs text-zinc-500 sm:gap-2 sm:flex-row sm:items-center sm:justify-between">
         <span>创建于 {formatDateTime(project.created_at, "date")}</span>
         <span>最近更新 {formatDateTime(project.updated_at, "datetime")}</span>
       </footer>
@@ -996,9 +996,9 @@ function ArtifactRow({
         <button
           type="button"
           onClick={() => onPreview(docTarget)}
-          className="flex min-h-14 w-full items-center gap-3 rounded-xl border border-zinc-800/80 bg-[#18181b] px-3 py-2 text-left transition hover:border-zinc-700 active:bg-zinc-800/60 sm:hidden"
+          className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-zinc-800/80 bg-[#18181b] px-3 py-1.5 text-left transition hover:border-zinc-700 active:bg-zinc-800/60 sm:hidden"
         >
-          <ArtifactIcon className={cn("h-4 w-4 shrink-0", artifactVisual.iconClassName)} />
+          <ArtifactIcon className={cn("h-4.5 w-4.5 shrink-0", artifactVisual.iconClassName)} />
           <div className="min-w-0 flex-1">
             <span className="block truncate text-sm font-medium text-zinc-100">{artifact.title}</span>
             <p className="mt-0.5 truncate text-[11px] text-zinc-500">{getArtifactMobileMeta(artifact)}</p>
@@ -1009,9 +1009,9 @@ function ArtifactRow({
           href={artifact.url}
           target="_blank"
           rel="noreferrer"
-          className="flex min-h-14 w-full items-center gap-3 rounded-xl border border-zinc-800/80 bg-[#18181b] px-3 py-2 text-left transition hover:border-zinc-700 active:bg-zinc-800/60 sm:hidden"
+          className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-zinc-800/80 bg-[#18181b] px-3 py-1.5 text-left transition hover:border-zinc-700 active:bg-zinc-800/60 sm:hidden"
         >
-          <ArtifactIcon className={cn("h-4 w-4 shrink-0", artifactVisual.iconClassName)} />
+          <ArtifactIcon className={cn("h-4.5 w-4.5 shrink-0", artifactVisual.iconClassName)} />
           <div className="min-w-0 flex-1">
             <span className="block truncate text-sm font-medium text-zinc-100">{artifact.title}</span>
             <p className="mt-0.5 truncate text-[11px] text-zinc-500">{getArtifactMobileMeta(artifact)}</p>
@@ -1019,8 +1019,8 @@ function ArtifactRow({
           <ExternalLink className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
         </a>
       ) : (
-        <div className="flex min-h-14 w-full items-center gap-3 rounded-xl border border-zinc-800/80 bg-[#18181b] px-3 py-2 sm:hidden">
-          <ArtifactIcon className={cn("h-4 w-4 shrink-0", artifactVisual.iconClassName)} />
+        <div className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-zinc-800/80 bg-[#18181b] px-3 py-1.5 sm:hidden">
+          <ArtifactIcon className={cn("h-4.5 w-4.5 shrink-0", artifactVisual.iconClassName)} />
           <div className="min-w-0 flex-1">
             <span className="block truncate text-sm font-medium text-zinc-100">{artifact.title}</span>
             <p className="mt-0.5 truncate text-[11px] text-zinc-500">{getArtifactMobileMeta(artifact)}</p>
@@ -1145,7 +1145,7 @@ function ContextFileList({
                 path: file.path,
                 source: { type: "workspace" },
               })}
-              className="flex w-full items-start gap-3 rounded-xl border border-zinc-800/80 bg-[#111113] px-3 py-2.5 text-left transition hover:border-zinc-700 hover:bg-zinc-900/70 sm:rounded-2xl sm:px-4 sm:py-3"
+              className="flex w-full items-start gap-3 rounded-xl border border-zinc-800/80 bg-[#111113] px-3 py-2 text-left transition hover:border-zinc-700 hover:bg-zinc-900/70 sm:rounded-2xl sm:px-4 sm:py-3"
             >
               <span className="mt-0.5 text-base">{contextIcons[file.name] || "📄"}</span>
               <div className="min-w-0 flex-1">
@@ -1162,7 +1162,7 @@ function ContextFileList({
                     </span>
                   )}
                 </div>
-                <div className="mt-1 text-[11px] text-zinc-500">{formatFileSize(file.size)} · {file.mtime}</div>
+                <div className="mt-0.5 text-[11px] text-zinc-500">{formatFileSize(file.size)} · {file.mtime}</div>
               </div>
               <Eye className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
             </button>
@@ -1205,7 +1205,7 @@ function MemoryFileList({
                 path: file.path,
                 source: { type: "workspace" },
               })}
-              className="flex w-full items-start gap-3 rounded-xl border border-zinc-800/80 bg-[#111113] px-3 py-2.5 text-left transition hover:border-zinc-700 hover:bg-zinc-900/70 sm:rounded-2xl sm:px-4 sm:py-3"
+              className="flex w-full items-start gap-3 rounded-xl border border-zinc-800/80 bg-[#111113] px-3 py-2 text-left transition hover:border-zinc-700 hover:bg-zinc-900/70 sm:rounded-2xl sm:px-4 sm:py-3"
             >
               <span className="mt-0.5 text-base">📝</span>
               <div className="min-w-0 flex-1">
@@ -1215,7 +1215,7 @@ function MemoryFileList({
                     可检索
                   </span>
                 </div>
-                <div className="mt-1 text-[11px] text-zinc-500">{formatFileSize(file.size)} · {file.mtime}</div>
+                <div className="mt-0.5 text-[11px] text-zinc-500">{formatFileSize(file.size)} · {file.mtime}</div>
               </div>
               <Eye className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
             </button>
@@ -1253,10 +1253,13 @@ function TimelineItem({ item, isLast }: { item: ReturnType<typeof getVisibleTime
   const summary = getTimelineSummary(item.event, item.mergedCount)
 
   return (
-    <div className="relative pl-5">
-      {!isLast && <div className="absolute bottom-0 left-[7px] top-0 border-l-2 border-zinc-700" />}
-      <span className={cn("absolute left-1 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full", getTimelineDotClassName(item.event.event_type))} />
-      <div className="flex min-w-0 items-center gap-3 rounded-xl border border-zinc-800/80 bg-[#18181b] px-3 py-2">
+    <div className="flex gap-3">
+      <div className="flex w-3 shrink-0 flex-col items-center">
+        <div className="flex-1" />
+        <span className={cn("h-2 w-2 rounded-full", getTimelineDotClassName(item.event.event_type))} />
+        <div className={cn("mt-1 w-0.5 flex-1 rounded-full", isLast ? "bg-transparent" : "bg-zinc-700")} />
+      </div>
+      <div className="flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-zinc-800/80 bg-[#18181b] px-3 py-2">
         <p className="min-w-0 flex-1 truncate text-sm text-zinc-200">
           {summary}
         </p>

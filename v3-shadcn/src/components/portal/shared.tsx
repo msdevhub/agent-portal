@@ -279,19 +279,20 @@ export function MobileDisclosure({
   children: ReactNode
 }) {
   return (
-    <details className="rounded-2xl border border-zinc-800/80 bg-[#18181b]">
-      <summary className="cursor-pointer list-none px-4 py-3">
+    <details className="group rounded-2xl border border-zinc-800/80 bg-[#18181b]">
+      <summary className="cursor-pointer list-none px-3 py-2.5">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-zinc-100">{title}</div>
           </div>
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate text-xs text-zinc-500">{summary}</span>
-            <span className="shrink-0 text-xs text-zinc-500">展开</span>
+            <span className="shrink-0 text-xs text-zinc-500 group-open:hidden">展开</span>
+            <span className="hidden shrink-0 text-xs text-zinc-500 group-open:inline">收起</span>
           </div>
         </div>
       </summary>
-      <div className="border-t border-zinc-800/80 px-4 py-4">{children}</div>
+      <div className="border-t border-zinc-800/80 px-3 py-3">{children}</div>
     </details>
   )
 }
@@ -512,7 +513,7 @@ export function MarkdownModal({ title, filePath, source, onClose, onError }: Mar
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
       <div className="relative flex h-[100dvh] w-full max-w-5xl flex-col overflow-hidden border border-zinc-800/80 bg-[#111113] shadow-2xl shadow-black/50 sm:h-[90vh] sm:rounded-xl lg:rounded-2xl">
-        <div className="flex h-10 items-center justify-between gap-2 border-b border-zinc-800/80 bg-[#18181b] px-2.5 sm:h-auto sm:px-5 sm:py-4">
+        <div className="flex h-12 items-center justify-between gap-2 border-b border-zinc-800/80 bg-[#18181b] px-2.5 sm:h-auto sm:px-5 sm:py-4">
           <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
             <FileText className="h-4 w-4 shrink-0 text-cyan-300 sm:h-5 sm:w-5" />
             <div className="min-w-0">
@@ -525,7 +526,7 @@ export function MarkdownModal({ title, filePath, source, onClose, onError }: Mar
               <button
                 type="button"
                 onClick={handleEdit}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700 bg-[#111113] text-xs font-medium text-zinc-100 transition hover:border-emerald-400/40 hover:text-emerald-200 sm:h-9 sm:w-auto sm:gap-1.5 sm:px-3"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-700 bg-[#111113] text-xs font-medium text-zinc-100 transition hover:border-emerald-400/40 hover:text-emerald-200 sm:h-9 sm:w-auto sm:gap-1.5 sm:px-3"
               >
                 <Edit3 className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">编辑</span>
@@ -538,7 +539,7 @@ export function MarkdownModal({ title, filePath, source, onClose, onError }: Mar
                     setEditing(false)
                     setEditContent(content || "")
                   }}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-xs text-zinc-400 transition hover:bg-zinc-800/60 hover:text-zinc-200 sm:h-9 sm:w-auto sm:px-3 sm:py-2"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-xs text-zinc-400 transition hover:bg-zinc-800/60 hover:text-zinc-200 sm:h-9 sm:w-auto sm:px-3 sm:py-2"
                 >
                   <RotateCcw className="h-3.5 w-3.5 sm:hidden" />
                   <span className="hidden sm:inline">取消</span>
@@ -547,14 +548,18 @@ export function MarkdownModal({ title, filePath, source, onClose, onError }: Mar
                   type="button"
                   onClick={() => void handleSave()}
                   disabled={saving}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700 bg-[#111113] text-xs font-medium text-zinc-100 transition hover:border-emerald-400/40 hover:text-emerald-200 disabled:opacity-50 sm:h-9 sm:w-auto sm:gap-1.5 sm:px-3"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-700 bg-[#111113] text-xs font-medium text-zinc-100 transition hover:border-emerald-400/40 hover:text-emerald-200 disabled:opacity-50 sm:h-9 sm:w-auto sm:gap-1.5 sm:px-3"
                 >
                   <Save className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">{saving ? "保存中..." : "保存"}</span>
                 </button>
               </>
             )}
-            <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-zinc-800/60 hover:text-zinc-200 sm:p-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg p-1.5 text-zinc-500 transition hover:bg-zinc-800/60 hover:text-zinc-200 sm:h-auto sm:w-auto sm:p-2"
+            >
               <X className="h-4 w-4 sm:h-5 sm:w-5" />
             </button>
           </div>
@@ -851,6 +856,22 @@ export function getErrorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message
   if (typeof error === "string") return error
   return "发生未知错误"
+}
+
+export function stripMarkdown(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/`(.+?)`/g, "$1")
+    .replace(/\[(.+?)\]\(.+?\)/g, "$1")
+    .replace(/!\[.*?\]\(.+?\)/g, "")
+    .replace(/^[-*+]\s+/gm, "")
+    .replace(/^\d+\.\s+/gm, "")
+    .replace(/^>\s+/gm, "")
+    .replace(/---+/g, "")
+    .replace(/\n{2,}/g, " ")
+    .trim()
 }
 
 export function truncateInlineText(value: string, maxLength: number) {

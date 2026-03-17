@@ -1,5 +1,6 @@
 import { FlaskConical, Plus } from "lucide-react"
 
+import { UserMenu } from "@/components/auth/UserMenu"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import {
@@ -50,7 +51,10 @@ export function HomePage({
     <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-4 px-4 py-5 sm:gap-8 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
       <header className="flex flex-col gap-4 sm:gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-1.5 sm:space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-4xl">研究项目首页</h1>
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-4xl">研究项目首页</h1>
+            <UserMenu />
+          </div>
           <p className="hidden max-w-2xl text-sm leading-6 text-zinc-400 sm:block">
             项目列表和全局统计分开处理。移动端优先暴露项目列表，次要统计折叠到下面。
           </p>
@@ -69,7 +73,7 @@ export function HomePage({
           <button
             type="button"
             onClick={onCreateProject}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-[#111113] px-4 text-sm font-medium text-zinc-100 transition hover:border-emerald-400/40 hover:bg-[#17171b] hover:text-emerald-200"
+            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-[#111113] px-4 text-xs font-medium text-zinc-100 transition hover:border-emerald-400/40 hover:bg-[#17171b] hover:text-emerald-200 sm:h-11 sm:w-auto sm:text-sm"
           >
             <Plus className="h-4 w-4" />
             新建研究项目
