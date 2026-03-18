@@ -68,6 +68,72 @@ export interface Stats {
   tasksDone: number
 }
 
+export interface DashboardSummary {
+  timestamp?: string
+  production?: { total: number; up: number }
+  dev?: { total: number; up: number }
+  containers?: { total: number; up: number }
+  crons?: { total: number; ok: number; error: number }
+  agents?: { total: number }
+}
+
+export interface ProductionSite {
+  name: string
+  emoji?: string
+  url: string
+  project?: string
+  status: number
+  checkedAt?: string
+}
+
+export interface DevServer {
+  name: string
+  subdomain?: string
+  port?: number
+  url: string
+  status: number
+  checkedAt?: string
+}
+
+export interface DashboardContainer {
+  name: string
+  status: string
+  ports?: string[] | string
+  image?: string
+  running?: boolean
+}
+
+export interface CronJob {
+  id: string
+  name: string
+  agent?: string
+  enabled?: boolean
+  schedule?: string
+  model?: string
+  lastStatus?: string
+  lastRun?: string
+  nextRun?: string
+  consecutiveErrors?: number
+}
+
+export interface DashboardAgent {
+  id: string
+  name: string
+  emoji?: string
+  role?: string
+  project?: string
+}
+
+export interface DashboardData {
+  summary: DashboardSummary
+  production_sites: ProductionSite[]
+  dev_servers: DevServer[]
+  containers: DashboardContainer[]
+  cron_jobs: CronJob[]
+  agents: DashboardAgent[]
+  updated_at: string | null
+}
+
 interface ApiErrorPayload {
   error?: string
   message?: string
@@ -162,9 +228,22 @@ function normalizeProject(project: Project): Project {
   }
 }
 
+function normalizeDashboardData(data: Partial<DashboardData> | undefined): DashboardData {
+  return {
+    summary: data?.summary ?? {},
+    production_sites: data?.production_sites ?? [],
+    dev_servers: data?.dev_servers ?? [],
+    containers: data?.containers ?? [],
+    cron_jobs: data?.cron_jobs ?? [],
+    agents: data?.agents ?? [],
+    updated_at: data?.updated_at ?? null,
+  }
+}
+
 export const fetchStats = () => api<Stats>('/stats')
 export const fetchProjects = async () => (await api<Project[]>('/projects')).map(normalizeProject)
 export const fetchProject = async (slug: string) => normalizeProject(await api<Project>(`/projects/${slug}`))
+export const fetchDashboard = async () => normalizeDashboardData(await api<DashboardData>('/dashboard'))
 export const createProject = (data: { name: string; description?: string; emoji?: string; stage?: string }) =>
   api<Project>('/projects', 'POST', data)
 export const updateProject = (id: string, data: Partial<Project>) =>

@@ -200,6 +200,40 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
+app.get('/api/dashboard', async (req, res) => {
+  try {
+    const rows = await dbQuery(`
+      SELECT key, data, updated_at
+      FROM "AP_dashboard"
+      ORDER BY updated_at DESC
+    `);
+
+    const payload = {
+      summary: {},
+      production_sites: [],
+      dev_servers: [],
+      containers: [],
+      cron_jobs: [],
+      agents: [],
+      updated_at: null,
+    };
+
+    for (const row of rows) {
+      if (row.key in payload) {
+        payload[row.key] = row.data ?? payload[row.key];
+      }
+
+      if (!payload.updated_at || new Date(row.updated_at).getTime() > new Date(payload.updated_at).getTime()) {
+        payload.updated_at = row.updated_at;
+      }
+    }
+
+    res.json(payload);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/projects', async (req, res) => {
   try {
     const rows = await dbQuery(`
