@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portal 指令栏流程图</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0f; color: #e4e4e7; font-family: -apple-system, 'Segoe UI', sans-serif; padding: 40px 20px; }
+  h1 { text-align: center; font-size: 1.4rem; color: #a1a1aa; margin-bottom: 32px; letter-spacing: 2px; }
+  .flow { max-width: 720px; margin: 0 auto; }
+
+  /* Step */
+  .step { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 8px; }
+  .step-num { flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem; }
+  .step-body { flex: 1; padding: 12px 16px; border-radius: 10px; border: 1px solid #27272a; background: #18181b; }
+  .step-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }
+  .step-desc { font-size: 0.82rem; color: #a1a1aa; line-height: 1.5; }
+  .step-desc code { background: #27272a; padding: 1px 6px; border-radius: 4px; font-size: 0.8rem; color: #22d3ee; }
+
+  /* Arrow */
+  .arrow { display: flex; justify-content: center; padding: 4px 0 4px 18px; }
+  .arrow svg { width: 20px; height: 24px; }
+  .arrow path { stroke: #3f3f46; stroke-width: 2; fill: none; }
+  .arrow polygon { fill: #3f3f46; }
+
+  /* Colors */
+  .c-user .step-num { background: #1e3a5f; color: #60a5fa; }
+  .c-portal .step-num { background: #1a2e1a; color: #4ade80; }
+  .c-mm .step-num { background: #3b1f3b; color: #c084fc; }
+  .c-bot .step-num { background: #3b2f1a; color: #fbbf24; }
+  .c-reply .step-num { background: #1a3b3b; color: #2dd4bf; }
+
+  /* Diagram section */
+  .diagram { max-width: 720px; margin: 40px auto 0; padding: 24px; border: 1px solid #27272a; border-radius: 12px; background: #18181b; }
+  .diagram h2 { font-size: 1rem; color: #a1a1aa; margin-bottom: 16px; text-align: center; }
+  .row { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 12px 0; flex-wrap: wrap; }
+  .box { padding: 8px 14px; border-radius: 8px; font-size: 0.82rem; font-weight: 500; text-align: center; white-space: nowrap; }
+  .box-user { background: #1e3a5f; color: #93c5fd; border: 1px solid #2563eb; }
+  .box-portal { background: #1a2e1a; color: #86efac; border: 1px solid #22c55e; }
+  .box-mm { background: #3b1f3b; color: #d8b4fe; border: 1px solid #a855f7; }
+  .box-bot { background: #3b2f1a; color: #fde68a; border: 1px solid #f59e0b; }
+  .box-claw { background: #3b1a1a; color: #fca5a5; border: 1px solid #ef4444; }
+  .arr { color: #3f3f46; font-size: 1.2rem; }
+  .label { font-size: 0.7rem; color: #71717a; text-align: center; margin-top: -6px; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<h1>🎛️ PORTAL 指令栏 — 完整流程</h1>
+
+<div class="flow">
+  <!-- Step 1 -->
+  <div class="step c-user">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <div class="step-title">👆 你点了 Bot 卡片上的 💬 按钮</div>
+      <div class="step-desc">比如点了 <code>@craftbot 🏰</code> → 底部指令栏显示引用目标</div>
+    </div>
+  </div>
+  <div class="arrow"><svg viewBox="0 0 20 24"><path d="M10 0 L10 16"/><polygon points="5,16 10,24 15,16"/></svg></div>
+
+  <!-- Step 2 -->
+  <div class="step c-user">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <div class="step-title">⌨️ 你在指令栏输入文字</div>
+      <div class="step-desc"><code>[@craftbot 🏰] 检查部署状态</code> → 点发送</div>
+    </div>
+  </div>
+  <div class="arrow"><svg viewBox="0 0 20 24"><path d="M10 0 L10 16"/><polygon points="5,16 10,24 15,16"/></svg></div>
+
+  <!-- Step 3 -->
+  <div class="step c-portal">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <div class="step-title">🖥️ Portal 后端收到请求</div>
+      <div class="step-desc"><code>POST /api/ops/send</code> → 拿到 craftbot 的 user_id</div>
+    </div>
+  </div>
+  <div class="arrow"><svg viewBox="0 0 20 24"><path d="M10 0 L10 16"/><polygon points="5,16 10,24 15,16"/></svg></div>
+
+  <!-- Step 4 -->
+  <div class="step c-mm">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <div class="step-title">💜 portalops → Mattermost API</div>
+      <div class="step-desc">用 <code>portalops</code> 的 token 给 <code>@craftbot</code> 发 DM："检查部署状态"</div>
+    </div>
+  </div>
+  <div class="arrow"><svg viewBox="0 0 20 24"><path d="M10 0 L10 16"/><polygon points="5,16 10,24 15,16"/></svg></div>
+
+  <!-- Step 5 -->
+  <div class="step c-bot">
+    <div class="step-num">5</div>
+    <div class="step-body">
+      <div class="step-title">🦞 服务器上的龙虾收到消息</div>
+      <div class="step-desc">clawedbot 上的 @craftbot 龙虾 agent 收到 DM → 自动执行指令 → 回复结果</div>
+    </div>
+  </div>
+  <div class="arrow"><svg viewBox="0 0 20 24"><path d="M10 0 L10 16"/><polygon points="5,16 10,24 15,16"/></svg></div>
+
+  <!-- Step 6 -->
+  <div class="step c-reply">
+    <div class="step-num">6</div>
+    <div class="step-body">
+      <div class="step-title">📨 回复回流到 Portal</div>
+      <div class="step-desc">前端轮询 <code>GET /api/ops/messages</code> → 读取 @craftbot 的回复 → 显示在指令栏上方</div>
+    </div>
+  </div>
+</div>
+
+<!-- Architecture Diagram -->
+<div class="diagram">
+  <h2>架构一览</h2>
+  <div class="row">
+    <div class="box box-user">👤 你（浏览器）</div>
+    <div class="arr">→</div>
+    <div class="box box-portal">🖥️ Portal API</div>
+    <div class="arr">→</div>
+    <div class="box box-mm">💜 Mattermost</div>
+    <div class="arr">→</div>
+    <div class="box box-bot">🤖 @craftbot</div>
+    <div class="arr">→</div>
+    <div class="box box-claw">🦞 龙虾执行</div>
+  </div>
+  <div class="label">portalops bot 是中间的信使，负责在 Portal ↔ Mattermost 之间传话</div>
+
+  <div class="row" style="margin-top: 20px;">
+    <div class="box box-claw">🦞 执行结果</div>
+    <div class="arr">→</div>
+    <div class="box box-bot">🤖 Bot 回复 DM</div>
+    <div class="arr">→</div>
+    <div class="box box-mm">💜 Mattermost</div>
+    <div class="arr">→</div>
+    <div class="box box-portal">🖥️ Portal 轮询</div>
+    <div class="arr">→</div>
+    <div class="box box-user">👤 你看到结果</div>
+  </div>
+  <div class="label">回复反向流动：龙虾 → Bot DM → Portal 读取 → 页面显示</div>
+</div>
+
+</body>
+</html>

@@ -123,6 +123,7 @@ export interface DashboardAgent {
   role?: string
   project?: string
   github?: string
+  mm_user_id?: string
   production?: { url: string; status: number } | null
   dev?: { url: string; status: number } | null
   container?: { name: string; running: boolean; status: string } | null
@@ -381,3 +382,35 @@ export async function fetchDocFile(slug: string, docPath: string): Promise<strin
 /** Write a project doc file */
 export const saveDocFile = (slug: string, docPath: string, content: string) =>
   api<{ ok: boolean }>(`/doc/${slug}/${docPath}`, 'PUT', { content })
+
+// ── Portal Ops APIs ──
+
+export interface OpsPost {
+  id: string
+  channel_id: string
+  user_id: string
+  message: string
+  create_at: number
+  update_at: number
+  type?: string
+}
+
+export interface OpsSendResult {
+  ok: boolean
+  post_id: string
+  channel_id: string
+}
+
+export interface OpsMessagesResult {
+  posts: OpsPost[]
+  channel_id: string
+}
+
+export const sendOpsMessage = (targetUserId: string, message: string) =>
+  api<OpsSendResult>('/ops/send', 'POST', { target_user_id: targetUserId, message })
+
+export const getOpsMessages = (channelId: string, since?: number) => {
+  let path = `/ops/messages?channel_id=${encodeURIComponent(channelId)}`
+  if (since) path += `&since=${since}`
+  return api<OpsMessagesResult>(path)
+}

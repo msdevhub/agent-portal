@@ -8,6 +8,11 @@ const MIME_TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'imag
 const SUPABASE_URL = 'https://db.dora.restry.cn';
 const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJzZXJ2aWNlX3JvbGUiLAogICAgImlzcyI6ICJzdXBhYmFzZS1kZW1vIiwKICAgICJpYXQiOiAxNjQxNzY5MjAwLAogICAgImV4cCI6IDE3OTk1MzU2MDAKfQ.DaYlNEoUrrEn2Ig7tqibS-PHK5vgusbcbo7X36XVt4Q';
 
+// ── Portal Ops Bot (Mattermost DM) ──
+const PORTAL_OPS_TOKEN = process.env.PORTAL_OPS_TOKEN || 'w5fcix3aciynxqypp1rdzswtyh';
+const PORTAL_OPS_USER_ID = 'n9izn6p15fboubx5reri5ftx6w';
+const MM_BASE_URL = process.env.MM_BASE_URL || 'https://mm.dora.restry.cn';
+
 const STAGE_LABELS = {
   idea: '想法',
   plan: '方案',
@@ -970,6 +975,89 @@ app.post('/api/sync-workspace', async (req, res) => {
   try {
     await syncWorkspaceOnce();
     res.json({ ok: true, message: '工作区同步完成' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Portal Ops: Send DM via portalops bot ──
+app.post('/api/ops/send', async (req, res) => {
+  try {
+    const { target_user_id, message } = req.body || {};
+    if (!target_user_id || !message) {
+      return res.status(400).json({ error: '缺少 target_user_id 或 message' });
+    }
+
+    // 1. Create / get DM channel between portalops and target
+    const channelRes = await fetch(`${MM_BASE_URL}/api/v4/channels/direct`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${PORTAL_OPS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify([PORTAL_OPS_USER_ID, target_user_id]),
+    });
+    if (!channelRes.ok) {
+      const err = await channelRes.text();
+      return res.status(502).json({ error: `MM create DM failed: ${err.slice(0, 300)}` });
+    }
+    const channel = await channelRes.json();
+
+    // 2. Post message
+    const postRes = await fetch(`${MM_BASE_URL}/api/v4/posts`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${PORTAL_OPS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        channel_id: channel.id,
+        message,
+      }),
+    });
+    if (!postRes.ok) {
+      const err = await postRes.text();
+      return res.status(502).json({ error: `MM post failed: ${err.slice(0, 300)}` });
+    }
+    const post = await postRes.json();
+
+    res.json({ ok: true, post_id: post.id, channel_id: channel.id });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Portal Ops: Get messages from a DM channel ──
+app.get('/api/ops/messages', async (req, res) => {
+  try {
+    const { channel_id, since } = req.query;
+    if (!channel_id) {
+      return res.status(400).json({ error: '缺少 channel_id' });
+    }
+
+    let url = `${MM_BASE_URL}/api/v4/channels/${encodeURIComponent(channel_id)}/posts`;
+    if (since) {
+      url += `?since=${encodeURIComponent(since)}`;
+    } else {
+      url += '?per_page=20';
+    }
+
+    const postsRes = await fetch(url, {
+      headers: { Authorization: `Bearer ${PORTAL_OPS_TOKEN}` },
+    });
+    if (!postsRes.ok) {
+      const err = await postsRes.text();
+      return res.status(502).json({ error: `MM get posts failed: ${err.slice(0, 300)}` });
+    }
+
+    const data = await postsRes.json();
+    // Normalize: return flat array of posts in chronological order
+    const posts = (data.order ?? [])
+      .map((id) => (data.posts ?? {})[id])
+      .filter(Boolean)
+      .reverse(); // chronological
+
+    res.json({ posts, channel_id });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react"
-import { Activity, Bot, ChevronDown, ExternalLink, FlaskConical, Monitor, Plus, RefreshCw, Server, Timer } from "lucide-react"
+import { Activity, Bot, ChevronDown, ExternalLink, FlaskConical, MessageSquare, Monitor, Plus, RefreshCw, Server, Timer } from "lucide-react"
 
 import { UserMenu } from "@/components/auth/UserMenu"
+import { CommandBar } from "@/components/portal/CommandBar"
+import type { CommandTarget } from "@/components/portal/CommandBar"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
@@ -55,6 +57,7 @@ export function DashboardPage({
   onCreateProject, onOpenProject,
 }: DashboardPageProps) {
   const [activeTab, setActiveTab] = useState<TabId>("bots")
+  const [commandTarget, setCommandTarget] = useState<CommandTarget | null>(null)
   const summary = dashboard.summary ?? {}
   const lastUpdated = dashboard.updated_at ?? summary.timestamp ?? null
   const servers = dashboard.servers ?? []
@@ -66,7 +69,7 @@ export function DashboardPage({
   const serverOnlineCount = servers.filter((s) => s.ssh_reachable).length
 
   return (
-    <main className="flex min-h-screen w-full flex-col gap-5 px-4 py-5 sm:gap-8 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+    <main className="flex min-h-screen w-full flex-col gap-5 px-4 py-5 pb-24 sm:gap-8 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
       {/* Header */}
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
@@ -92,7 +95,7 @@ export function DashboardPage({
       </div>
 
       {/* Tab Content */}
-      {activeTab === "bots" && <BotFleetTab dashboard={dashboard} loading={loading} />}
+      {activeTab === "bots" && <BotFleetTab dashboard={dashboard} loading={loading} onSelectTarget={setCommandTarget} />}
       {activeTab === "servers" && <ServerFleetTab servers={servers} loading={loading} />}
       {activeTab === "projects" && (
         <ProjectsTab
@@ -104,6 +107,9 @@ export function DashboardPage({
           onOpenProject={onOpenProject}
         />
       )}
+
+      {/* Command Bar */}
+      <CommandBar target={commandTarget} onClearTarget={() => setCommandTarget(null)} />
     </main>
   )
 }
@@ -138,7 +144,7 @@ function TabButton({ active, onClick, icon: Icon, label, count }: {
 
 /* ═══════════════════ Bot Fleet Tab ═══════════════════ */
 
-function BotFleetTab({ dashboard, loading }: { dashboard: DashboardData; loading: boolean }) {
+function BotFleetTab({ dashboard, loading, onSelectTarget }: { dashboard: DashboardData; loading: boolean; onSelectTarget: (t: CommandTarget) => void }) {
   const summary = dashboard.summary ?? {}
   const agents = dashboard.agents ?? []
 
@@ -200,7 +206,7 @@ function BotFleetTab({ dashboard, loading }: { dashboard: DashboardData; loading
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {agents.map((agent) => (
-              <BotCard key={agent.id} agent={agent} />
+              <BotCard key={agent.id} agent={agent} onSelectTarget={onSelectTarget} />
             ))}
           </div>
         )}
@@ -250,12 +256,13 @@ function BotFleetTab({ dashboard, loading }: { dashboard: DashboardData; loading
 
 /* ═══════════════════ Bot Card ═══════════════════ */
 
-function BotCard({ agent }: { agent: DashboardAgent }) {
+function BotCard({ agent, onSelectTarget }: { agent: DashboardAgent; onSelectTarget: (t: CommandTarget) => void }) {
   const prod = agent.production
   const dev = agent.dev
   const container = agent.container
   const crons = agent.crons
   const tasks = agent.tasks
+  const canMessage = !!agent.mm_user_id
 
   return (
     <Card className="border-zinc-800/80 bg-[#111113] shadow-none">
@@ -274,11 +281,29 @@ function BotCard({ agent }: { agent: DashboardAgent }) {
             </div>
             <div className="mt-0.5 text-xs text-zinc-500">@{agent.id}</div>
           </div>
-          {agent.github && (
-            <a href={agent.github} target="_blank" rel="noreferrer" className="text-zinc-500 transition hover:text-zinc-300" title="GitHub">
-              <ExternalLink className="h-4 w-4" />
-            </a>
-          )}
+          <div className="flex items-center gap-1.5">
+            {canMessage && (
+              <button
+                type="button"
+                onClick={() =>
+                  onSelectTarget({
+                    name: agent.name ?? agent.id,
+                    emoji: agent.emoji ?? "🤖",
+                    user_id: agent.mm_user_id!,
+                  })
+                }
+                className="rounded-lg border border-zinc-800 bg-[#18181b] p-2 text-zinc-500 transition hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-300"
+                title={`给 ${agent.name ?? agent.id} 发指令`}
+              >
+                <MessageSquare className="h-4 w-4" />
+              </button>
+            )}
+            {agent.github && (
+              <a href={agent.github} target="_blank" rel="noreferrer" className="text-zinc-500 transition hover:text-zinc-300" title="GitHub">
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            )}
+          </div>
         </div>
 
         {/* Deployment status */}
