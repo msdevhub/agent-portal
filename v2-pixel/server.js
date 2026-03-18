@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 
 const app = express();
-const PORT = 18820;
+const PORT = 3019;
 const MIME_TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 
 const SUPABASE_URL = 'https://db.dora.restry.cn';
@@ -39,7 +39,7 @@ app.use(express.json());
 app.use(express.static(STATIC_ROOT));
 
 async function dbQuery(sql) {
-  const res = await fetch(`${SUPABASE_URL}/pg/query`, {
+  const res = await fetch(`${SUPABASE_URL}/pg/rest/v1/rpc/run_sql`, {
     method: 'POST',
     headers: {
       apikey: SERVICE_KEY,
@@ -205,18 +205,68 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
-async function getLatestServerSnapshots() {
+async function getLatestServerSnapshots(at = null) {
+  const timeFilter = at ? `WHERE snapshot_time <= '${esc(at)}'` : '';
   return dbQuery(`
     SELECT DISTINCT ON (name) *
     FROM "AP_server_snapshots"
+    ${timeFilter}
     ORDER BY name, snapshot_time DESC
+  `);
+}
+
+async function getDashboardRowsAt(at = null) {
+  if (!at) {
+    return dbQuery(`
+      SELECT key, data, updated_at
+      FROM "AP_dashboard"
+      ORDER BY updated_at DESC
+    `);
+  }
+
+  return dbQuery(`
+    SELECT DISTINCT ON (key) key, data, updated_at
+    FROM "AP_dashboard"
+    WHERE updated_at <= '${esc(at)}'
+    ORDER BY key, updated_at DESC
+  `);
+}
+
+async function getDashboardTimepoints(limit = 120) {
+  return dbQuery(`
+    SELECT updated_at AS ts, 'dashboard' AS source
+    FROM "AP_dashboard"
+    UNION
+    SELECT snapshot_time AS ts, 'server' AS source
+    FROM "AP_server_snapshots"
+    ORDER BY ts DESC
+    LIMIT ${Number(limit) || 120}
   `);
 }
 
 app.get('/api/servers', async (req, res) => {
   try {
-    const servers = await getLatestServerSnapshots();
+    const at = req.query.at ? String(req.query.at) : null;
+    const servers = await getLatestServerSnapshots(at);
     res.json(servers);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/dashboard/history', async (req, res) => {
+  try {
+    const limit = Number(req.query.limit || 120);
+    const rows = await getDashboardTimepoints(limit);
+    const deduped = [];
+    const seen = new Set();
+    for (const row of rows) {
+      const iso = row.ts ? new Date(row.ts).toISOString() : null;
+      if (!iso || seen.has(iso)) continue;
+      seen.add(iso);
+      deduped.push(iso);
+    }
+    res.json({ points: deduped });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -224,13 +274,10 @@ app.get('/api/servers', async (req, res) => {
 
 app.get('/api/dashboard', async (req, res) => {
   try {
+    const at = req.query.at ? String(req.query.at) : null;
     const [rows, servers] = await Promise.all([
-      dbQuery(`
-        SELECT key, data, updated_at
-        FROM "AP_dashboard"
-        ORDER BY updated_at DESC
-      `),
-      getLatestServerSnapshots(),
+      getDashboardRowsAt(at),
+      getLatestServerSnapshots(at),
     ]);
 
     const payload = {
@@ -254,6 +301,7 @@ app.get('/api/dashboard', async (req, res) => {
       }
     }
 
+    payload.as_of = at || payload.updated_at;
     res.json(payload);
   } catch (error) {
     res.status(500).json({ error: error.message });
