@@ -175,3 +175,50 @@ html {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.1) #09090b;
 }
+
+/* Time Machine slider - bigger track and thumb */
+.tm-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 32px;
+  background: transparent;
+  cursor: pointer;
+}
+.tm-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #27272a 0%, #3f3f46 100%);
+}
+.tm-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #10b981;
+  border: 2px solid #064e3b;
+  margin-top: -7px;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+  transition: box-shadow 0.15s;
+}
+.tm-slider::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.6);
+}
+.tm-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #27272a 0%, #3f3f46 100%);
+  border: none;
+}
+.tm-slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #10b981;
+  border: 2px solid #064e3b;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+}
+.tm-slider:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

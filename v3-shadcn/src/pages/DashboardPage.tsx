@@ -39,6 +39,11 @@ interface DashboardPageProps {
   dashboard: DashboardData
   loading: boolean
   refreshing: boolean
+  historyPoints: string[]
+  historyBotPoints?: string[]
+  historyServerPoints?: string[]
+  selectedAsOf: string | null
+  onSelectAsOf: (value: string | null) => void
   // Projects tab data
   stats: Stats
   projects: Project[]
@@ -51,7 +56,7 @@ interface DashboardPageProps {
 type TabId = "bots" | "servers" | "projects"
 
 export function DashboardPage({
-  dashboard, loading, refreshing,
+  dashboard, loading, refreshing, historyPoints, historyBotPoints, historyServerPoints, selectedAsOf, onSelectAsOf,
   stats, projects, recentNotes, projectsLoading,
   onCreateProject, onOpenProject,
 }: DashboardPageProps) {
@@ -59,6 +64,8 @@ export function DashboardPage({
   const [commandTarget, setCommandTarget] = useState<CommandTarget | null>(null)
   const summary = dashboard.summary ?? {}
   const lastUpdated = dashboard.updated_at ?? summary.timestamp ?? null
+  const asOf = dashboard.as_of ?? lastUpdated ?? null
+  const historyIndex = selectedAsOf ? Math.max(historyPoints.findIndex((point) => point === selectedAsOf), 0) : 0
   const servers = dashboard.servers ?? []
   const agents = dashboard.agents ?? []
   const serverOnlineCount = servers.filter((s) => s.ssh_reachable).length
@@ -81,6 +88,16 @@ export function DashboardPage({
         </div>
         <UserMenu />
       </header>
+
+      <TimeMachineBar
+        points={historyPoints}
+        botPoints={historyBotPoints}
+        serverPoints={historyServerPoints}
+        value={selectedAsOf}
+        currentIndex={historyIndex}
+        currentLabel={asOf}
+        onChange={onSelectAsOf}
+      />
 
       {/* Tab Bar */}
       <div className="flex flex-wrap gap-2">
@@ -110,6 +127,110 @@ export function DashboardPage({
 }
 
 /* ═══════════════════ Tab Button ═══════════════════ */
+
+function TimeMachineBar({ points, botPoints, serverPoints, value, currentIndex, currentLabel, onChange }: {
+  points: string[]
+  botPoints?: string[]
+  serverPoints?: string[]
+  value: string | null
+  currentIndex: number
+  currentLabel: string | null
+  onChange: (value: string | null) => void
+}) {
+  const canTravel = points.length > 1
+  const bots = botPoints ?? []
+  const servers = serverPoints ?? []
+
+  // Build tick marks for the slider
+  const tickPositions = useMemo(() => {
+    if (points.length < 2) return []
+    const max = points.length - 1
+    // Show up to 8 evenly-spaced ticks
+    const count = Math.min(8, points.length)
+    const step = max / (count - 1)
+    return Array.from({ length: count }, (_, i) => Math.round(i * step))
+  }, [points.length])
+
+  return (
+    <Card className="border-zinc-800/80 bg-[#111113] shadow-none">
+      <CardContent className="space-y-4 px-4 py-5 sm:px-5">
+        <div className="flex flex-wrap items-center gap-3">
+          <div>
+            <div className="text-sm font-semibold text-zinc-100">🕰️ 时光机</div>
+            <div className="mt-1 text-xs text-zinc-500">
+              {value ? `正在查看 ${formatDateTime(currentLabel)} 的快照` : `当前最新快照 · ${formatDateTime(currentLabel)}`}
+            </div>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            {/* Source counts */}
+            <span className="rounded-md bg-zinc-800/60 px-2 py-1 text-[11px] text-zinc-400">
+              🤖 {bots.length}
+            </span>
+            <span className="rounded-md bg-zinc-800/60 px-2 py-1 text-[11px] text-zinc-400">
+              🖥️ {servers.length}
+            </span>
+            {value && (
+              <button
+                type="button"
+                onClick={() => onChange(null)}
+                className="rounded-lg border border-zinc-700 bg-[#18181b] px-3 py-1.5 text-xs text-zinc-300 transition hover:border-zinc-600 hover:text-zinc-100"
+              >
+                回到最新
+              </button>
+            )}
+            <span className="rounded-full bg-zinc-800 px-2 py-1 text-[11px] text-zinc-400">
+              {canTravel ? `${currentIndex + 1}/${points.length}` : "暂无历史"}
+            </span>
+          </div>
+        </div>
+
+        {/* Slider track with bigger thumb */}
+        <div className="space-y-1">
+          <div className="relative">
+            <input
+              type="range"
+              min={0}
+              max={Math.max(points.length - 1, 0)}
+              step={1}
+              value={Math.min(currentIndex, Math.max(points.length - 1, 0))}
+              disabled={!canTravel}
+              onChange={(e) => {
+                const nextIndex = Number(e.target.value)
+                const point = points[nextIndex]
+                onChange(nextIndex === 0 ? null : point ?? null)
+              }}
+              className="tm-slider w-full disabled:opacity-40"
+            />
+            {/* Tick marks */}
+            {canTravel && (
+              <div className="pointer-events-none absolute inset-x-[6px] top-0 flex h-8 items-end">
+                {tickPositions.map((pos) => {
+                  const pct = (pos / Math.max(points.length - 1, 1)) * 100
+                  return (
+                    <div
+                      key={pos}
+                      className="absolute bottom-0 h-2 w-px bg-zinc-600"
+                      style={{ left: `${pct}%` }}
+                    />
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Tick labels */}
+          <div className="flex items-center justify-between text-[11px] text-zinc-500">
+            <span>{points[points.length - 1] ? formatDateTime(points[points.length - 1]) : "—"}</span>
+            {points.length > 4 && (
+              <span>{points[Math.floor(points.length / 2)] ? formatDateTime(points[Math.floor(points.length / 2)]) : ""}</span>
+            )}
+            <span>{points[0] ? formatDateTime(points[0]) : "—"}</span>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 function TabButton({ active, onClick, icon: Icon, label, count }: {
   active: boolean

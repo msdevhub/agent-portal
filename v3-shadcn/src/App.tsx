@@ -10,6 +10,7 @@ import {
 import {
   fetchArtifacts,
   fetchDashboard,
+  fetchDashboardHistory,
   fetchProject,
   fetchProjects,
   fetchStats,
@@ -38,6 +39,10 @@ function App() {
   const [dashboard, setDashboard] = useState<DashboardData>(EMPTY_DASHBOARD)
   const [dashboardLoading, setDashboardLoading] = useState(true)
   const [dashboardRefreshing, setDashboardRefreshing] = useState(false)
+  const [dashboardHistory, setDashboardHistory] = useState<string[]>([])
+  const [dashboardBotPoints, setDashboardBotPoints] = useState<string[]>([])
+  const [dashboardServerPoints, setDashboardServerPoints] = useState<string[]>([])
+  const [dashboardAsOf, setDashboardAsOf] = useState<string | null>(null)
 
   // Projects state
   const [stats, setStats] = useState<Stats>({ total: 0, active: 0, completed: 0, tasks: 0, tasksDone: 0 })
@@ -64,12 +69,18 @@ function App() {
   }, [errorMessage])
 
   // --- Dashboard loading ---
-  const loadDashboard = useCallback(async (mode: "initial" | "refresh" = "initial") => {
+  const loadDashboard = useCallback(async (mode: "initial" | "refresh" = "initial", at?: string | null) => {
     if (mode === "initial") setDashboardLoading(true)
     else setDashboardRefreshing(true)
     try {
-      const data = await fetchDashboard()
+      const [data, history] = await Promise.all([
+        fetchDashboard(at ?? undefined),
+        fetchDashboardHistory(),
+      ])
       setDashboard(data)
+      setDashboardHistory(history.points ?? [])
+      setDashboardBotPoints(history.botPoints ?? [])
+      setDashboardServerPoints(history.serverPoints ?? [])
     } catch (error) {
       showError(error)
     } finally {
@@ -138,15 +149,16 @@ function App() {
 
   // Load dashboard data on mount + auto-refresh
   useEffect(() => {
-    void loadDashboard("initial")
-  }, [loadDashboard])
+    void loadDashboard("initial", dashboardAsOf)
+  }, [dashboardAsOf, loadDashboard])
 
   useEffect(() => {
+    if (dashboardAsOf) return
     const timer = window.setInterval(() => {
       void loadDashboard("refresh")
     }, 60_000)
     return () => window.clearInterval(timer)
-  }, [loadDashboard])
+  }, [dashboardAsOf, loadDashboard])
 
   // Route-based detail loading
   useEffect(() => {
@@ -179,6 +191,11 @@ function App() {
             dashboard={dashboard}
             loading={dashboardLoading}
             refreshing={dashboardRefreshing}
+            historyPoints={dashboardHistory}
+            historyBotPoints={dashboardBotPoints}
+            historyServerPoints={dashboardServerPoints}
+            selectedAsOf={dashboardAsOf}
+            onSelectAsOf={setDashboardAsOf}
             stats={stats}
             projects={projects}
             recentNotes={recentNotes}

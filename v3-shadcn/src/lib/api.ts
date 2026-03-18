@@ -181,6 +181,7 @@ export interface DashboardData {
   agents: DashboardAgent[]
   servers: ServerSnapshot[]
   updated_at: string | null
+  as_of?: string | null
 }
 
 interface ApiErrorPayload {
@@ -287,13 +288,15 @@ function normalizeDashboardData(data: Partial<DashboardData> | undefined): Dashb
     agents: data?.agents ?? [],
     servers: data?.servers ?? [],
     updated_at: data?.updated_at ?? null,
+    as_of: data?.as_of ?? data?.updated_at ?? null,
   }
 }
 
 export const fetchStats = () => api<Stats>('/stats')
 export const fetchProjects = async () => (await api<Project[]>('/projects')).map(normalizeProject)
 export const fetchProject = async (slug: string) => normalizeProject(await api<Project>(`/projects/${slug}`))
-export const fetchDashboard = async () => normalizeDashboardData(await api<DashboardData>('/dashboard'))
+export const fetchDashboard = async (at?: string) => normalizeDashboardData(await api<DashboardData>(`/dashboard${at ? `?at=${encodeURIComponent(at)}` : ''}`))
+export const fetchDashboardHistory = async (limit = 120) => api<{ points: string[]; botPoints?: string[]; serverPoints?: string[] }>(`/dashboard/history?limit=${limit}`)
 export const createProject = (data: { name: string; description?: string; emoji?: string; stage?: string }) =>
   api<Project>('/projects', 'POST', data)
 export const updateProject = (id: string, data: Partial<Project>) =>
