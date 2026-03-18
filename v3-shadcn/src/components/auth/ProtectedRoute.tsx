@@ -1,4 +1,4 @@
-import { useAuth } from '../../lib/auth'
+import { useLogto } from '@logto/react'
 import type { ReactNode } from 'react'
 
 const REDIRECT_URI = (() => {
@@ -7,7 +7,7 @@ const REDIRECT_URI = (() => {
 })()
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { isAuthenticated, isLoading, signIn } = useAuth()
+  const { isAuthenticated, isLoading, signIn } = useLogto()
 
   if (isLoading) {
     return (
