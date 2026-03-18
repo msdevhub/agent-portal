@@ -59,6 +59,9 @@ export function DashboardPage({
   const lastUpdated = dashboard.updated_at ?? summary.timestamp ?? null
   const servers = dashboard.servers ?? []
   const agents = dashboard.agents ?? []
+  const cronJobs = dashboard.cron_jobs ?? []
+  const productionSites = dashboard.production_sites ?? []
+  const containers = dashboard.containers ?? []
 
   const serverOnlineCount = servers.filter((s) => s.ssh_reachable).length
 
@@ -209,7 +212,7 @@ function BotFleetTab({ dashboard, loading }: { dashboard: DashboardData; loading
           <CardTitle className="text-zinc-50">Cron Jobs</CardTitle>
         </CardHeader>
         <CardContent>
-          {dashboard.cron_jobs.length === 0 ? (
+          {(dashboard.cron_jobs ?? []).length === 0 ? (
             <EmptyRow text="暂无 Cron Jobs 数据" />
           ) : (
             <div className="overflow-x-auto">
@@ -225,7 +228,7 @@ function BotFleetTab({ dashboard, loading }: { dashboard: DashboardData; loading
                   </tr>
                 </thead>
                 <tbody>
-                  {dashboard.cron_jobs.map((job) => (
+                  {(dashboard.cron_jobs ?? []).map((job) => (
                     <tr key={job.id} className="border-b border-zinc-900/80 text-zinc-300 last:border-0">
                       <td className="px-3 py-3 font-medium text-zinc-100">{job.name}</td>
                       <td className="px-3 py-3">{job.agent || "—"}</td>
@@ -638,8 +641,8 @@ function MiniStat({ label, value, accentClassName }: { label: string; value: str
 function ServerFleetCard({ server }: { server: ServerSnapshot }) {
   const memoryPct = computeUsagePct(server.memory_used_mb, server.memory_total_mb)
   const diskPct = clampPercent(server.disk_usage_pct || computeUsagePct(server.disk_used_gb, server.disk_total_gb))
-  const runningServices = server.services.filter((service) => isServiceRunning(service)).length
-  const stoppedServices = Math.max(server.services.length - runningServices, 0)
+  const runningServices = (server.services ?? []).filter((service) => isServiceRunning(service)).length
+  const stoppedServices = Math.max((server.services ?? []).length - runningServices, 0)
 
   return (
     <Card className={server.ssh_reachable ? "border-zinc-800/80 bg-[#111113] shadow-none" : "border-rose-500/60 bg-[#111113] shadow-none"}>
@@ -670,7 +673,7 @@ function ServerFleetCard({ server }: { server: ServerSnapshot }) {
             <span>服务: <span className="text-emerald-300">{runningServices} running</span> / <span className="text-rose-300">{stoppedServices} stopped</span></span>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {server.services.map((service) => <ServiceBadge key={`${server.id}-${service.name}`} service={service} />)}
+            {(server.services ?? []).map((service) => <ServiceBadge key={`${server.id}-${service.name}`} service={service} />)}
           </div>
         </div>
 
