@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { Activity, Bot, ExternalLink, FlaskConical, Monitor, Plus, RefreshCw, Server, Timer } from "lucide-react"
+import { Activity, Bot, ChevronDown, ExternalLink, FlaskConical, Monitor, Plus, RefreshCw, Server, Timer } from "lucide-react"
 
 import { UserMenu } from "@/components/auth/UserMenu"
 import { Badge } from "@/components/ui/badge"
@@ -369,9 +369,29 @@ function BotCard({ agent }: { agent: DashboardAgent }) {
 
 /* ═══════════════════ Server Fleet Tab ═══════════════════ */
 
+function classifyServers(servers: ServerSnapshot[]) {
+  const alertServers: ServerSnapshot[] = []
+  const unreachable: ServerSnapshot[] = []
+  const coreServers: ServerSnapshot[] = []
+  const proxyServers: ServerSnapshot[] = []
+  const otherServers: ServerSnapshot[] = []
+
+  for (const s of servers) {
+    if ((s.alerts ?? []).length > 0) alertServers.push(s)
+    else if (!s.ssh_reachable) unreachable.push(s)
+    else if (s.name?.startsWith("proxy-")) proxyServers.push(s)
+    else if (["claw-runtime", "mattermost-server", "dev-ubuntu-host", "PVE2"].includes(s.name)) coreServers.push(s)
+    else otherServers.push(s)
+  }
+  return { alertServers, unreachable, coreServers, proxyServers, otherServers }
+}
+
 function ServerFleetTab({ servers, loading }: { servers: ServerSnapshot[]; loading: boolean }) {
+  const [proxyExpanded, setProxyExpanded] = useState(false)
+  const [unreachableExpanded, setUnreachableExpanded] = useState(false)
   const onlineCount = servers.filter((s) => s.ssh_reachable).length
   const totalAlerts = servers.reduce((sum, s) => sum + (s.alerts?.length ?? 0), 0)
+  const { alertServers, unreachable, coreServers, proxyServers, otherServers } = useMemo(() => classifyServers(servers), [servers])
 
   const overviewCards = useMemo(() => [
     { title: "服务器总数", value: `${servers.length}`, accent: "text-blue-300", icon: Monitor },
@@ -401,19 +421,109 @@ function ServerFleetTab({ servers, loading }: { servers: ServerSnapshot[]; loadi
         })}
       </section>
 
-      {/* Server cards */}
       {loading && servers.length === 0 ? (
         <EmptyRow text="加载中..." />
       ) : servers.length === 0 ? (
         <EmptyRow text="暂无服务器数据" />
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-          {servers.map((server) => (
-            <ServerFleetCard key={server.id} server={server} />
-          ))}
+        <div className="space-y-8">
+          {/* Alert servers — always top, always visible */}
+          {alertServers.length > 0 && (
+            <ServerGroup title={`🚨 告警 (${alertServers.length})`} accent="text-rose-300">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+                {alertServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="core" />)}
+              </div>
+            </ServerGroup>
+          )}
+
+          {/* Core servers — full-width when ≤2 */}
+          {coreServers.length > 0 && (
+            <ServerGroup title={`🏢 核心服务 (${coreServers.length})`} accent="text-blue-300">
+              <div className={cn(
+                "grid gap-3",
+                coreServers.length === 1 ? "grid-cols-1" :
+                coreServers.length === 2 ? "grid-cols-1 lg:grid-cols-2" :
+                "grid-cols-1 lg:grid-cols-2 xl:grid-cols-3"
+              )}>
+                {coreServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="core" />)}
+              </div>
+            </ServerGroup>
+          )}
+
+          {/* Other named servers */}
+          {otherServers.length > 0 && (
+            <ServerGroup title={`🖥️ 其他服务 (${otherServers.length})`} accent="text-zinc-300">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+                {otherServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="core" />)}
+              </div>
+            </ServerGroup>
+          )}
+
+          {/* Proxy nodes — collapsed by default */}
+          {proxyServers.length > 0 && (() => {
+            const memPcts = proxyServers.map((p) => computeUsagePct(p.memory_used_mb, p.memory_total_mb))
+            const avgMem = Math.round(memPcts.reduce((a, b) => a + b, 0) / memPcts.length)
+            const maxMem = Math.max(...memPcts)
+            const allHealthy = proxyServers.every((p) => p.ssh_reachable)
+            return (
+              <ServerGroup
+                title={`🌐 代理节点 (${proxyServers.length})`}
+                accent="text-zinc-400"
+                collapsible
+                expanded={proxyExpanded}
+                onToggle={() => setProxyExpanded(!proxyExpanded)}
+                summary={`${allHealthy ? "全部健康" : "⚠ 部分异常"} · 内存 ${avgMem}% 均 / ${maxMem}% 峰`}
+              >
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {proxyServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="compact" />)}
+                </div>
+              </ServerGroup>
+            )
+          })()}
+
+          {/* Unreachable — collapsed by default */}
+          {unreachable.length > 0 && (
+            <ServerGroup
+              title={`❌ 不可达 (${unreachable.length})`}
+              accent="text-zinc-500"
+              collapsible
+              expanded={unreachableExpanded}
+              onToggle={() => setUnreachableExpanded(!unreachableExpanded)}
+              summary={`${unreachable.length} 台 SSH 不可达`}
+            >
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {unreachable.map((s) => <ServerFleetCard key={s.id} server={s} mode="compact" />)}
+              </div>
+            </ServerGroup>
+          )}
         </div>
       )}
     </div>
+  )
+}
+
+function ServerGroup({ title, accent, children, collapsible, expanded, onToggle, summary }: {
+  title: string; accent: string; children: React.ReactNode
+  collapsible?: boolean; expanded?: boolean; onToggle?: () => void; summary?: string
+}) {
+  return (
+    <section>
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          className="mb-3 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-zinc-800/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+        >
+          <h3 className={`text-sm font-semibold ${accent}`}>{title}</h3>
+          {summary && <span className="text-xs text-zinc-500">{summary}</span>}
+          <ChevronDown className={cn("ml-auto h-4 w-4 text-zinc-500 transition-transform", expanded && "rotate-180")} />
+        </button>
+      ) : (
+        <h3 className={`mb-3 pl-2 text-sm font-semibold ${accent}`}>{title}</h3>
+      )}
+      {(!collapsible || expanded) && children}
+    </section>
   )
 }
 
@@ -638,62 +748,170 @@ function MiniStat({ label, value, accentClassName }: { label: string; value: str
 
 /* ═══════════════════ Server Card ═══════════════════ */
 
-function ServerFleetCard({ server }: { server: ServerSnapshot }) {
+function ServerFleetCard({ server, mode = "core" }: { server: ServerSnapshot; mode?: "core" | "compact" }) {
+  const [expanded, setExpanded] = useState(false)
   const memoryPct = computeUsagePct(server.memory_used_mb, server.memory_total_mb)
   const diskPct = clampPercent(server.disk_usage_pct || computeUsagePct(server.disk_used_gb, server.disk_total_gb))
-  const runningServices = (server.services ?? []).filter((service) => isServiceRunning(service)).length
-  const stoppedServices = Math.max((server.services ?? []).length - runningServices, 0)
+  const services = server.services ?? []
+  const alerts = server.alerts ?? []
+  const tags = server.tags ?? []
+  const runningServices = services.filter((s) => isServiceRunning(s)).length
+  const stoppedServices = Math.max(services.length - runningServices, 0)
+  const hasAlerts = alerts.length > 0
+  const worstUsage = Math.max(memoryPct, diskPct)
 
-  return (
-    <Card className={server.ssh_reachable ? "border-zinc-800/80 bg-[#111113] shadow-none" : "border-rose-500/60 bg-[#111113] shadow-none"}>
-      <CardContent className="space-y-4 p-5">
-        <div className="flex items-start justify-between gap-3 border-b border-zinc-800/80 pb-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-base font-semibold text-zinc-50">
-              <span>🖥️</span>
-              <span className="truncate">{server.name}</span>
+  // Compact mode for proxy/unreachable: minimal single-line card
+  if (mode === "compact") {
+    return (
+      <Card className="border-zinc-800/80 bg-[#111113] shadow-none">
+        <CardContent className="p-0">
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            aria-expanded={expanded}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-zinc-800/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 focus-visible:ring-inset"
+          >
+            <DotIndicator ok={server.ssh_reachable} />
+            <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-200">{server.name}</span>
+            <span className={cn("text-[10px] font-medium", worstUsage > 80 ? "text-rose-300" : worstUsage > 50 ? "text-amber-300" : "text-zinc-500")}>
+              {worstUsage}%
+            </span>
+            <ChevronDown className={cn("h-3 w-3 shrink-0 text-zinc-600 transition-transform", expanded && "rotate-180")} />
+          </button>
+          {expanded && (
+            <div className="space-y-2 border-t border-zinc-800/60 px-3 pb-3 pt-2">
+              <UsageBar label="内存" used={server.memory_used_mb} total={server.memory_total_mb} unit="MB" percent={memoryPct} />
+              <UsageBar label="磁盘" used={server.disk_used_gb} total={server.disk_total_gb} unit="GB" percent={diskPct} />
+              <div className="text-[11px] text-zinc-500">
+                SSH: <span className={server.ssh_reachable ? "text-emerald-300" : "text-rose-300"}>{server.ssh_reachable ? "✅" : "❌"}</span> {server.ip}:{server.ssh_port}
+              </div>
             </div>
-            <div className="mt-0.5 text-xs text-zinc-500">{server.role || "—"}</div>
-          </div>
-          <div className="shrink-0 text-right text-xs text-zinc-500">
-            <div>{server.cloud || "—"} · {server.region || "—"}</div>
-            <div className="mt-0.5">{server.os || "—"}</div>
-          </div>
-        </div>
+          )}
+        </CardContent>
+      </Card>
+    )
+  }
 
-        <div className="space-y-2.5">
-          <MetricLine label="CPU" value={`${server.cpu_cores ?? 0} cores`} />
-          <UsageBar label="内存" used={server.memory_used_mb} total={server.memory_total_mb} unit="MB" percent={memoryPct} />
-          <UsageBar label="磁盘" used={server.disk_used_gb} total={server.disk_total_gb} unit="GB" percent={diskPct} />
-          <MetricLine label="运行时间" value={formatUptime(server.uptime_seconds)} />
-        </div>
+  // Core mode: full card with alerts surfaced
+  return (
+    <Card className={cn(
+      "shadow-none transition-colors",
+      hasAlerts ? "border-l-2 border-l-rose-500 border-t-zinc-800/80 border-r-zinc-800/80 border-b-zinc-800/80 bg-rose-500/5" :
+      !server.ssh_reachable ? "border-rose-500/40 bg-[#111113]" :
+      "border-zinc-800/80 bg-[#111113]"
+    )}>
+      <CardContent className="p-0">
+        {/* Collapsed: always visible summary row */}
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-zinc-800/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 focus-visible:ring-inset"
+        >
+          <DotIndicator ok={server.ssh_reachable && !hasAlerts} />
 
-        <div className="space-y-2 border-t border-zinc-800/80 pt-3">
-          <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400">
-            <span>服务: <span className="text-emerald-300">{runningServices} running</span> / <span className="text-rose-300">{stoppedServices} stopped</span></span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-sm font-semibold text-zinc-50">{server.name}</span>
+              {hasAlerts && (
+                <span
+                  className="rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-medium text-rose-300"
+                  title={alerts.map((a) => `[${a.level}] ${a.message}`).join("\n")}
+                  aria-label={`告警: ${alerts.map((a) => a.message).join("; ")}`}
+                >
+                  ⚠ {summarizeAlert(alerts[0])}
+                </span>
+              )}
+            </div>
+            <div className="text-[11px] text-zinc-500">{server.role || server.cloud || "—"}</div>
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {(server.services ?? []).map((service) => <ServiceBadge key={`${server.id}-${service.name}`} service={service} />)}
-          </div>
-        </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-800/80 pt-3 text-xs">
-          <span className="text-zinc-400">
-            SSH: <span className={server.ssh_reachable ? "text-emerald-300" : "text-rose-300"}>{server.ssh_reachable ? "✅" : "❌"}</span>{" "}
-            {server.ip}:{server.ssh_port}
-          </span>
-          <div className="flex flex-wrap gap-1.5">
-            {(server.tags ?? []).map((tag) => (
-              <Badge key={`${server.id}-${tag}`} variant="outline" className="border-zinc-700 bg-[#18181b] text-zinc-400 text-xs">
-                {tag}
-              </Badge>
-            ))}
+          {/* MEM/DISK mini bars */}
+          <div className="hidden w-32 gap-1.5 sm:flex sm:flex-col">
+            <MiniUsageBar label="MEM" percent={memoryPct} />
+            <MiniUsageBar label="DISK" percent={diskPct} />
           </div>
-        </div>
 
-        {(server.alerts ?? []).length > 0 && <AlertsPanel alerts={server.alerts} />}
+          <div className="sm:hidden">
+            <span className={cn("text-xs font-medium", worstUsage > 80 ? "text-rose-300" : worstUsage > 50 ? "text-amber-300" : "text-emerald-300")}>
+              {worstUsage}%
+            </span>
+          </div>
+
+          {/* Service count + SSH status */}
+          <div className="hidden items-center gap-2 text-[11px] lg:flex">
+            <span className="text-zinc-500"><span className="text-emerald-400">{runningServices}</span>/{services.length}</span>
+            <span className={server.ssh_reachable ? "text-emerald-400" : "text-rose-400"}>{server.ssh_reachable ? "🟢" : "🔴"}</span>
+          </div>
+
+          <ChevronDown className={cn("h-4 w-4 shrink-0 text-zinc-500 transition-transform", expanded && "rotate-180")} />
+        </button>
+
+        {/* Core card: inline service badges when not expanded */}
+        {!expanded && services.length > 0 && (
+          <div className="flex flex-wrap gap-1 border-t border-zinc-800/40 px-4 py-2">
+            {services.map((service) => <ServiceBadge key={`${server.id}-${service.name}-inline`} service={service} />)}
+          </div>
+        )}
+
+        {/* Expanded: full details */}
+        {expanded && (
+          <div className="space-y-4 border-t border-zinc-800/60 px-4 pb-4 pt-3">
+            <div className="space-y-2.5">
+              <MetricLine label="CPU" value={`${server.cpu_cores ?? 0} cores`} />
+              <UsageBar label="内存" used={server.memory_used_mb} total={server.memory_total_mb} unit="MB" percent={memoryPct} />
+              <UsageBar label="磁盘" used={server.disk_used_gb} total={server.disk_total_gb} unit="GB" percent={diskPct} />
+              <MetricLine label="运行时间" value={formatUptime(server.uptime_seconds)} />
+            </div>
+
+            {services.length > 0 && (
+              <div className="space-y-2 border-t border-zinc-800/60 pt-3">
+                <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400">
+                  <span>服务: <span className="text-emerald-300">{runningServices} running</span> / <span className="text-rose-300">{stoppedServices} stopped</span></span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {services.map((service) => <ServiceBadge key={`${server.id}-${service.name}`} service={service} />)}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2 border-t border-zinc-800/60 pt-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-zinc-400">
+                  SSH: <span className={server.ssh_reachable ? "text-emerald-300" : "text-rose-300"}>{server.ssh_reachable ? "✅" : "❌"}</span>{" "}
+                  {server.ip}:{server.ssh_port}
+                </span>
+                <span className="text-zinc-600">{server.cloud || "—"} · {server.region || "—"}</span>
+              </div>
+              <div className="text-zinc-600">{server.os || "—"}</div>
+              {tags.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {tags.map((tag) => (
+                    <Badge key={`${server.id}-${tag}`} variant="outline" className="border-zinc-700 bg-[#18181b] text-xs text-zinc-400">
+                      {tag}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {hasAlerts && <AlertsPanel alerts={alerts} />}
+          </div>
+        )}
       </CardContent>
     </Card>
+  )
+}
+
+function MiniUsageBar({ label, percent }: { label: string; percent: number }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="w-7 text-[9px] text-zinc-500">{label}</span>
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-800">
+        <div className={`h-full rounded-full ${getUsageBarColor(percent)}`} style={{ width: `${percent}%` }} />
+      </div>
+      <span className={cn("w-7 text-right text-[9px]", percent > 80 ? "text-rose-300" : "text-zinc-500")}>{percent}%</span>
+    </div>
   )
 }
 
@@ -807,5 +1025,24 @@ function getUsageBarColor(pct: number) {
 }
 
 function isServiceRunning(service: ServerService) { return String(service.status || "").toLowerCase() === "running" }
+
+function summarizeAlert(alert?: ServerAlert): string {
+  if (!alert?.message) return "告警"
+  const msg = alert.message
+  // Detect common patterns and produce structured summaries
+  if (/磁盘|disk/i.test(msg)) {
+    const pct = msg.match(/(\d+)%/)
+    return pct ? `磁盘 ${pct[1]}%` : "磁盘告警"
+  }
+  if (/内存|memory|mem/i.test(msg)) {
+    const pct = msg.match(/(\d+)%/)
+    return pct ? `内存 ${pct[1]}%` : "内存告警"
+  }
+  if (/restart|重启/i.test(msg)) return "容器重启中"
+  if (/cpu/i.test(msg)) return "CPU 过载"
+  if (/ssh|连接|connect/i.test(msg)) return "SSH 异常"
+  // Fallback: first 20 chars
+  return msg.length > 20 ? msg.slice(0, 20) + "…" : msg
+}
 
 function fmtNum(v?: number) { return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 }).format(v ?? 0) }
