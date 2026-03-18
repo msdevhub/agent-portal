@@ -11,6 +11,7 @@ export default defineConfig({
     },
   },
   server: {
+    allowedHosts: ['portal.dev.dora.restry.cn', 'dev.dora.restry.cn'],
     proxy: {
       '/api': 'http://localhost:18820',
     },

@@ -122,6 +122,12 @@ export interface DashboardAgent {
   emoji?: string
   role?: string
   project?: string
+  github?: string
+  production?: { url: string; status: number } | null
+  dev?: { url: string; status: number } | null
+  container?: { name: string; running: boolean; status: string } | null
+  crons?: { total: number; ok: number; error: number; jobs: Array<{ name: string; lastStatus: string; schedule: string }> }
+  tasks?: { pending: number; done: number; total: number } | null
 }
 
 export interface ServerService {

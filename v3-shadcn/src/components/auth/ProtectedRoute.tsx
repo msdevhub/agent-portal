@@ -9,6 +9,11 @@ const REDIRECT_URI = (() => {
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { isAuthenticated, isLoading, signIn } = useLogto()
 
+  // Bypass auth on localhost for dev/preview
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return <>{children}</>
+  }
+
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#09090b] text-zinc-400">

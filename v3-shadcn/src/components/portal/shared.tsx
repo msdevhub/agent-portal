@@ -34,7 +34,7 @@ import type { Artifact, Project, Stats, TimelineEvent, WorkspaceFile } from "@/l
 import { STATUS_LABELS, STAGES, getArtifactTypeLabel, getStageIndex, getStageLabel } from "@/lib/constants"
 import { cn } from "@/lib/utils"
 
-export type Route = { page: "home" } | { page: "project"; slug: string }
+export type Route = { page: "home" } | { page: "projects" } | { page: "project"; slug: string }
 export type MarkdownSource = { type: "workspace" } | { type: "doc"; slug: string }
 
 export interface MarkdownPreviewTarget {
@@ -603,7 +603,10 @@ export function useHashRoute() {
 }
 
 export function navigateToRoute(route: Route) {
-  const nextHash = route.page === "home" ? "#/" : `#/project/${encodeURIComponent(route.slug)}`
+  let nextHash: string
+  if (route.page === "home") nextHash = "#/"
+  else if (route.page === "projects") nextHash = "#/projects"
+  else nextHash = `#/project/${encodeURIComponent(route.slug)}`
   if (window.location.hash === nextHash) return
   window.location.hash = nextHash
 }
@@ -611,6 +614,7 @@ export function navigateToRoute(route: Route) {
 function parseHashRoute(hash: string): Route {
   const normalized = hash.replace(/^#/, "") || "/"
   if (normalized === "/" || normalized === "") return { page: "home" }
+  if (normalized === "/projects") return { page: "projects" }
 
   const match = normalized.match(/^\/project\/(.+)$/)
   if (match) {

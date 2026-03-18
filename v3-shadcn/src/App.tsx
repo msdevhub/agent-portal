@@ -1,9 +1,25 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
-import { getErrorMessage, navigateToRoute, useHashRoute } from "@/components/portal/shared"
-import { fetchDashboard } from "@/lib/api"
-import type { DashboardData } from "@/lib/api"
-import { HomePage } from "@/pages/HomePage"
+import {
+  CreateProjectModal,
+  ErrorToast,
+  getErrorMessage,
+  navigateToRoute,
+  useHashRoute,
+} from "@/components/portal/shared"
+import {
+  fetchArtifacts,
+  fetchDashboard,
+  fetchProject,
+  fetchProjects,
+  fetchStats,
+  fetchTimeline,
+  initDB,
+} from "@/lib/api"
+import type { DashboardData, Project, Stats } from "@/lib/api"
+import { DashboardPage } from "@/pages/DashboardPage"
+import { HomePage } from "@/pages/ProjectsPage"
+import { ProjectDetailPage } from "@/pages/ProjectDetailPage"
 
 const EMPTY_DASHBOARD: DashboardData = {
   summary: {},
@@ -12,15 +28,27 @@ const EMPTY_DASHBOARD: DashboardData = {
   containers: [],
   cron_jobs: [],
   agents: [],
+  servers: [],
   updated_at: null,
 }
 
 function App() {
   const route = useHashRoute()
+
+  // Dashboard state
   const [dashboard, setDashboard] = useState<DashboardData>(EMPTY_DASHBOARD)
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
+  const [dashboardLoading, setDashboardLoading] = useState(true)
+  const [dashboardRefreshing, setDashboardRefreshing] = useState(false)
+
+  // Projects state
+  const [stats, setStats] = useState<Stats>({ total: 0, active: 0, completed: 0, tasks: 0, tasksDone: 0 })
+  const [projects, setProjects] = useState<Project[]>([])
+  const [overviewLoading, setOverviewLoading] = useState(true)
+  const [detailProject, setDetailProject] = useState<Project | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [showCreate, setShowCreate] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const detailRequestId = useRef(0)
 
   const showError = useCallback((error: unknown) => {
     setErrorMessage(getErrorMessage(error))
@@ -36,27 +64,80 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [errorMessage])
 
+  // --- Dashboard loading ---
   const loadDashboard = useCallback(async (mode: "initial" | "refresh" = "initial") => {
-    if (mode === "initial") {
-      setLoading(true)
-    } else {
-      setRefreshing(true)
-    }
-
+    if (mode === "initial") setDashboardLoading(true)
+    else setDashboardRefreshing(true)
     try {
       const data = await fetchDashboard()
       setDashboard(data)
     } catch (error) {
       showError(error)
     } finally {
-      if (mode === "initial") {
-        setLoading(false)
-      } else {
-        setRefreshing(false)
-      }
+      if (mode === "initial") setDashboardLoading(false)
+      else setDashboardRefreshing(false)
     }
   }, [showError])
 
+  // --- Projects loading ---
+  const loadOverview = useCallback(async () => {
+    setOverviewLoading(true)
+    try {
+      const [nextStats, summaryList] = await Promise.all([fetchStats(), fetchProjects()])
+      const detailedProjects = await Promise.all(summaryList.map((project) => fetchProject(project.slug)))
+      const mergedProjects = detailedProjects.map((project) => {
+        const summary = summaryList.find((item) => item.id === project.id)
+        return { ...summary, ...project }
+      })
+      setStats(nextStats)
+      setProjects(mergedProjects)
+    } catch (error) {
+      showError(error)
+    } finally {
+      setOverviewLoading(false)
+    }
+  }, [showError])
+
+  const loadProjectDetail = useCallback(async (slug: string) => {
+    const requestId = ++detailRequestId.current
+    setDetailLoading(true)
+    setDetailProject(null)
+    try {
+      const project = await fetchProject(slug)
+      const [artifacts, timeline] = await Promise.all([
+        fetchArtifacts(project.id),
+        fetchTimeline(project.id),
+      ])
+      if (requestId !== detailRequestId.current) return null
+      const mergedProject = { ...project, artifacts, timeline }
+      setDetailProject(mergedProject)
+      return mergedProject
+    } catch (error) {
+      if (requestId === detailRequestId.current) setDetailProject(null)
+      showError(error)
+      return null
+    } finally {
+      if (requestId === detailRequestId.current) setDetailLoading(false)
+    }
+  }, [showError])
+
+  const refreshProject = useCallback(async (slug: string) => {
+    await Promise.all([loadOverview(), loadProjectDetail(slug)])
+  }, [loadOverview, loadProjectDetail])
+
+  // Init DB + load overview
+  useEffect(() => {
+    void (async () => {
+      try {
+        await initDB()
+        await loadOverview()
+      } catch (error) {
+        showError(error)
+      }
+    })()
+  }, [loadOverview, showError])
+
+  // Load dashboard data on mount + auto-refresh
   useEffect(() => {
     void loadDashboard("initial")
   }, [loadDashboard])
@@ -65,33 +146,76 @@ function App() {
     const timer = window.setInterval(() => {
       void loadDashboard("refresh")
     }, 60_000)
-
     return () => window.clearInterval(timer)
   }, [loadDashboard])
+
+  // Route-based detail loading
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "auto" })
+    if (route.page === "project") {
+      void loadProjectDetail(route.slug)
+      return
+    }
+    detailRequestId.current += 1
+    setDetailLoading(false)
+    setDetailProject(null)
+  }, [loadProjectDetail, route])
+
+  const recentNotes = useMemo(() => (
+    projects
+      .flatMap((project) => (project.notes || []).map((note) => ({
+        ...note,
+        projectName: project.name,
+      })))
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 5)
+  ), [projects])
 
   return (
     <div className="dark min-h-screen bg-[#09090b] text-zinc-100 selection:bg-emerald-500/30">
       <div className="pointer-events-none fixed inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.14),transparent_46%),radial-gradient(circle_at_78%_12%,rgba(14,165,233,0.1),transparent_24%)]" />
       <div className="relative">
-        <HomePage
-          dashboard={dashboard}
-          loading={loading}
-          refreshing={refreshing}
-          onBackToProjects={() => {
-            if (route.page === "project") {
-              navigateToRoute({ page: "home" })
-              return
-            }
-            window.location.hash = '#/projects'
-          }}
-        />
+        {route.page === "home" && (
+          <DashboardPage
+            dashboard={dashboard}
+            loading={dashboardLoading}
+            refreshing={dashboardRefreshing}
+            onBackToProjects={() => navigateToRoute({ page: "projects" })}
+          />
+        )}
+        {route.page === "projects" && (
+          <HomePage
+            stats={stats}
+            projects={projects}
+            recentNotes={recentNotes}
+            loading={overviewLoading}
+            onCreateProject={() => setShowCreate(true)}
+            onOpenProject={(slug) => navigateToRoute({ page: "project", slug })}
+          />
+        )}
+        {route.page === "project" && (
+          <ProjectDetailPage
+            project={detailProject}
+            loading={detailLoading}
+            onBack={() => navigateToRoute({ page: "projects" })}
+            onRefresh={refreshProject}
+            onError={showError}
+          />
+        )}
       </div>
 
-      {errorMessage && (
-        <div className="fixed right-4 bottom-4 z-50 rounded-xl border border-rose-500/30 bg-[#18181b] px-4 py-3 text-sm text-rose-200 shadow-lg">
-          {errorMessage}
-        </div>
+      {showCreate && (
+        <CreateProjectModal
+          onClose={() => setShowCreate(false)}
+          onCreated={async () => {
+            setShowCreate(false)
+            await loadOverview()
+          }}
+          onError={showError}
+        />
       )}
+
+      <ErrorToast message={errorMessage} onClose={() => setErrorMessage(null)} />
     </div>
   )
 }
