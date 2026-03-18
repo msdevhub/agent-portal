@@ -215,35 +215,6 @@ async function getLatestServerSnapshots(at = null) {
   `);
 }
 
-async function getDashboardRowsAt(at = null) {
-  if (!at) {
-    return dbQuery(`
-      SELECT key, data, updated_at
-      FROM "AP_dashboard"
-      ORDER BY updated_at DESC
-    `);
-  }
-
-  return dbQuery(`
-    SELECT DISTINCT ON (key) key, data, updated_at
-    FROM "AP_dashboard"
-    WHERE updated_at <= '${esc(at)}'
-    ORDER BY key, updated_at DESC
-  `);
-}
-
-async function getDashboardTimepoints(limit = 120) {
-  return dbQuery(`
-    SELECT updated_at AS ts, 'dashboard' AS source
-    FROM "AP_dashboard"
-    UNION
-    SELECT snapshot_time AS ts, 'server' AS source
-    FROM "AP_server_snapshots"
-    ORDER BY ts DESC
-    LIMIT ${Number(limit) || 120}
-  `);
-}
-
 app.get('/api/servers', async (req, res) => {
   try {
     const at = req.query.at ? String(req.query.at) : null;
@@ -257,7 +228,13 @@ app.get('/api/servers', async (req, res) => {
 app.get('/api/dashboard/history', async (req, res) => {
   try {
     const limit = Number(req.query.limit || 120);
-    const rows = await getDashboardTimepoints(limit);
+    const rows = await dbQuery(`
+      SELECT snapshot_time AS ts FROM "AP_agent_checks"
+      UNION
+      SELECT snapshot_time AS ts FROM "AP_server_snapshots"
+      ORDER BY ts DESC
+      LIMIT ${limit}
+    `);
     const deduped = [];
     const seen = new Set();
     for (const row of rows) {
@@ -275,34 +252,64 @@ app.get('/api/dashboard/history', async (req, res) => {
 app.get('/api/dashboard', async (req, res) => {
   try {
     const at = req.query.at ? String(req.query.at) : null;
-    const [rows, servers] = await Promise.all([
-      getDashboardRowsAt(at),
+    const timeFilter = at ? `WHERE snapshot_time <= '${esc(at)}'` : '';
+
+    const [sites, containers, crons, agents, servers] = await Promise.all([
+      dbQuery(`SELECT DISTINCT ON (name, kind) * FROM "AP_site_checks" ${timeFilter} ORDER BY name, kind, snapshot_time DESC`),
+      dbQuery(`SELECT DISTINCT ON (name) * FROM "AP_container_checks" ${timeFilter} ORDER BY name, snapshot_time DESC`),
+      dbQuery(`SELECT DISTINCT ON (job_id) * FROM "AP_cron_checks" ${timeFilter} ORDER BY job_id, snapshot_time DESC`),
+      dbQuery(`SELECT DISTINCT ON (agent_id) * FROM "AP_agent_checks" ${timeFilter} ORDER BY agent_id, snapshot_time DESC`),
       getLatestServerSnapshots(at),
     ]);
 
-    const payload = {
-      summary: {},
-      production_sites: [],
-      dev_servers: [],
-      containers: [],
-      cron_jobs: [],
-      agents: [],
+    const productionSites = (sites ?? []).filter(s => s.kind === 'production').map(s => ({
+      name: s.name, url: s.url, project: s.project_slug, status: s.http_status, checkedAt: s.snapshot_time,
+    }));
+    const devServers = (sites ?? []).filter(s => s.kind === 'dev').map(s => ({
+      name: s.name, url: s.url, port: s.port, status: s.http_status, checkedAt: s.snapshot_time,
+    }));
+    const containerList = (containers ?? []).map(c => ({
+      name: c.name, image: c.image, status: c.status_text, running: c.running, ports: c.ports,
+    }));
+    const cronList = (crons ?? []).map(c => ({
+      id: c.job_id, name: c.name, agent: c.agent_id, enabled: c.enabled,
+      schedule: c.schedule, model: c.model, lastStatus: c.last_status,
+      lastRun: c.last_run, nextRun: c.next_run, consecutiveErrors: c.consecutive_errors,
+    }));
+    const agentList = (agents ?? []).map(a => ({
+      id: a.agent_id, name: a.name, emoji: a.emoji, role: a.role,
+      project: a.project_slug, github: a.github_url, mm_user_id: a.mm_user_id,
+      production: a.prod_url ? { url: a.prod_url, status: a.prod_status } : null,
+      dev: a.dev_url ? { url: a.dev_url, status: a.dev_status } : null,
+      container: a.container_name ? { name: a.container_name, running: a.container_running, status: a.container_status } : null,
+      crons: { total: a.cron_total, ok: a.cron_ok, error: a.cron_error, jobs: a.cron_jobs ?? [] },
+      tasks: { pending: a.tasks_pending, done: a.tasks_done, total: a.tasks_total },
+    }));
+
+    const prodUp = productionSites.filter(s => s.status === 200).length;
+    const devUp = devServers.filter(s => s.status === 200).length;
+    const latestSnapshot = (agents ?? []).reduce((max, a) => {
+      const t = a.snapshot_time ? new Date(a.snapshot_time).getTime() : 0;
+      return t > max ? t : max;
+    }, 0);
+
+    res.json({
+      summary: {
+        production: { total: productionSites.length, up: prodUp },
+        dev: { total: devServers.length, up: devUp },
+        containers: { total: containerList.length, up: containerList.filter(c => c.running).length },
+        crons: { total: cronList.length, ok: cronList.filter(c => c.lastStatus === 'ok').length, error: cronList.filter(c => c.lastStatus === 'error').length },
+        agents: { total: agentList.length },
+      },
+      production_sites: productionSites,
+      dev_servers: devServers,
+      containers: containerList,
+      cron_jobs: cronList,
+      agents: agentList,
       servers,
-      updated_at: null,
-    };
-
-    for (const row of rows) {
-      if (row.key in payload) {
-        payload[row.key] = row.data ?? payload[row.key];
-      }
-
-      if (!payload.updated_at || new Date(row.updated_at).getTime() > new Date(payload.updated_at).getTime()) {
-        payload.updated_at = row.updated_at;
-      }
-    }
-
-    payload.as_of = at || payload.updated_at;
-    res.json(payload);
+      updated_at: latestSnapshot ? new Date(latestSnapshot).toISOString() : null,
+      as_of: at || (latestSnapshot ? new Date(latestSnapshot).toISOString() : null),
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
