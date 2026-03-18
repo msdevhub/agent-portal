@@ -200,13 +200,33 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
+async function getLatestServerSnapshots() {
+  return dbQuery(`
+    SELECT DISTINCT ON (name) *
+    FROM "AP_server_snapshots"
+    ORDER BY name, snapshot_time DESC
+  `);
+}
+
+app.get('/api/servers', async (req, res) => {
+  try {
+    const servers = await getLatestServerSnapshots();
+    res.json(servers);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/dashboard', async (req, res) => {
   try {
-    const rows = await dbQuery(`
-      SELECT key, data, updated_at
-      FROM "AP_dashboard"
-      ORDER BY updated_at DESC
-    `);
+    const [rows, servers] = await Promise.all([
+      dbQuery(`
+        SELECT key, data, updated_at
+        FROM "AP_dashboard"
+        ORDER BY updated_at DESC
+      `),
+      getLatestServerSnapshots(),
+    ]);
 
     const payload = {
       summary: {},
@@ -215,6 +235,7 @@ app.get('/api/dashboard', async (req, res) => {
       containers: [],
       cron_jobs: [],
       agents: [],
+      servers,
       updated_at: null,
     };
 

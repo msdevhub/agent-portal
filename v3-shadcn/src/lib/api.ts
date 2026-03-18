@@ -124,6 +124,47 @@ export interface DashboardAgent {
   project?: string
 }
 
+export interface ServerService {
+  name: string
+  type: string
+  status: string
+  ports: string[]
+}
+
+export interface ServerAlert {
+  level: string
+  message: string
+}
+
+export interface ServerSnapshot {
+  id: string
+  name: string
+  ip: string
+  internal_ip: string | null
+  region: string
+  cloud: string
+  resource_group: string
+  role: string
+  tags: string[]
+  os: string
+  cpu_cores: number
+  memory_total_mb: number
+  memory_used_mb: number
+  disk_total_gb: number
+  disk_used_gb: number
+  disk_usage_pct: number
+  uptime_seconds: number
+  ssh_port: number
+  ssh_user: string
+  ssh_reachable: boolean
+  services: ServerService[]
+  listening_ports: number[]
+  alerts: ServerAlert[]
+  extra: Record<string, unknown>
+  snapshot_time: string
+  collector: string
+}
+
 export interface DashboardData {
   summary: DashboardSummary
   production_sites: ProductionSite[]
@@ -131,6 +172,7 @@ export interface DashboardData {
   containers: DashboardContainer[]
   cron_jobs: CronJob[]
   agents: DashboardAgent[]
+  servers: ServerSnapshot[]
   updated_at: string | null
 }
 
@@ -236,6 +278,7 @@ function normalizeDashboardData(data: Partial<DashboardData> | undefined): Dashb
     containers: data?.containers ?? [],
     cron_jobs: data?.cron_jobs ?? [],
     agents: data?.agents ?? [],
+    servers: data?.servers ?? [],
     updated_at: data?.updated_at ?? null,
   }
 }

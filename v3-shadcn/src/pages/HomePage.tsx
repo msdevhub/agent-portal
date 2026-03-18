@@ -1,10 +1,18 @@
 import { useMemo } from "react"
-import { Activity, ArrowLeft, Bot, ExternalLink, RefreshCw, Server, Timer } from "lucide-react"
+import { Activity, ArrowLeft, Bot, ExternalLink, Monitor, RefreshCw, Server, Timer } from "lucide-react"
 
 import { UserMenu } from "@/components/auth/UserMenu"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import type { DashboardAgent, DashboardContainer, DashboardData, ProductionSite } from "@/lib/api"
+import type {
+  DashboardAgent,
+  DashboardContainer,
+  DashboardData,
+  ProductionSite,
+  ServerAlert,
+  ServerService,
+  ServerSnapshot,
+} from "@/lib/api"
 
 interface HomePageProps {
   dashboard: DashboardData
@@ -16,6 +24,9 @@ interface HomePageProps {
 export function HomePage({ dashboard, loading, refreshing, onBackToProjects }: HomePageProps) {
   const summary = dashboard.summary ?? {}
   const lastUpdated = dashboard.updated_at ?? summary.timestamp ?? null
+
+  const serverOnlineCount = dashboard.servers.filter((server) => server.ssh_reachable).length
+  const serverTotalCount = dashboard.servers.length
 
   const statusCards = useMemo(() => ([
     {
@@ -46,10 +57,17 @@ export function HomePage({ dashboard, loading, refreshing, onBackToProjects }: H
       description: 'total',
       accent: 'text-violet-300',
     },
-  ]), [dashboard.agents.length, dashboard.containers, dashboard.cron_jobs.length, dashboard.production_sites, summary])
+    {
+      title: '服务器',
+      icon: Monitor,
+      value: `${serverOnlineCount}/${serverTotalCount}`,
+      description: 'SSH online',
+      accent: 'text-blue-300',
+    },
+  ]), [dashboard.agents.length, dashboard.containers, dashboard.cron_jobs.length, dashboard.production_sites, serverOnlineCount, serverTotalCount, summary])
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:gap-8 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+    <main className="flex min-h-screen w-full flex-col gap-5 px-4 py-5 sm:gap-8 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-3">
           <div className="flex items-center gap-3">
@@ -67,7 +85,7 @@ export function HomePage({ dashboard, loading, refreshing, onBackToProjects }: H
               <div>
                 <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-4xl">系统 Dashboard</h1>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-                  展示生产站点、容器、Cron Jobs 与 Agent 状态，数据来自 Supabase AP_dashboard 表。
+                  展示生产站点、服务器、容器、Cron Jobs 与 Agent 状态，数据来自 Supabase AP_dashboard / AP_server_snapshots。
                 </p>
               </div>
               <UserMenu />
@@ -85,7 +103,7 @@ export function HomePage({ dashboard, loading, refreshing, onBackToProjects }: H
         </div>
       </header>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {statusCards.map((card) => {
           const Icon = card.icon
           return (
@@ -104,6 +122,25 @@ export function HomePage({ dashboard, loading, refreshing, onBackToProjects }: H
           )
         })}
       </section>
+
+      <Card className="border-zinc-800/80 bg-[#18181b] shadow-none">
+        <CardHeader>
+          <CardTitle className="text-zinc-50">Server Fleet</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading && dashboard.servers.length === 0 ? (
+            <EmptyRow text="加载中..." />
+          ) : dashboard.servers.length === 0 ? (
+            <EmptyRow text="暂无服务器数据" />
+          ) : (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+              {dashboard.servers.map((server) => (
+                <ServerFleetCard key={server.id} server={server} />
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,0.7fr)]">
         <Card className="border-zinc-800/80 bg-[#18181b] shadow-none">
@@ -239,6 +276,140 @@ export function HomePage({ dashboard, loading, refreshing, onBackToProjects }: H
   )
 }
 
+function ServerFleetCard({ server }: { server: ServerSnapshot }) {
+  const memoryPct = computeUsagePct(server.memory_used_mb, server.memory_total_mb)
+  const diskPct = clampPercent(server.disk_usage_pct || computeUsagePct(server.disk_used_gb, server.disk_total_gb))
+  const runningServices = server.services.filter((service) => isServiceRunning(service)).length
+  const stoppedServices = Math.max(server.services.length - runningServices, 0)
+  const sshLabel = server.ssh_reachable ? '✅' : '❌'
+  const alertCount = server.alerts.length
+
+  return (
+    <Card className={server.ssh_reachable ? 'border-zinc-800/80 bg-[#111113] shadow-none' : 'border-rose-500/60 bg-[#111113] shadow-none'}>
+      <CardContent className="space-y-4 p-5">
+        <div className="flex items-start justify-between gap-3 border-b border-zinc-800/80 pb-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-base font-semibold text-zinc-50">
+              <span>🖥️</span>
+              <span className="truncate">{server.name}</span>
+            </div>
+            <div className="mt-1 text-sm text-zinc-400">{server.role || '—'}</div>
+          </div>
+          <div className="shrink-0 text-right text-sm text-zinc-400">
+            <div>{server.cloud || '—'} · {server.region || '—'}</div>
+            <div className="mt-1">{server.os || '—'}</div>
+          </div>
+        </div>
+
+        <div className="space-y-3 border-b border-zinc-800/80 pb-4">
+          <MetricLine label="CPU" value={`${server.cpu_cores ?? 0} cores`} />
+          <UsageBar label="内存" used={server.memory_used_mb} total={server.memory_total_mb} unit="MB" percent={memoryPct} />
+          <UsageBar label="磁盘" used={server.disk_used_gb} total={server.disk_total_gb} unit="GB" percent={diskPct} />
+          <MetricLine label="运行时间" value={formatUptime(server.uptime_seconds)} />
+        </div>
+
+        <div className="space-y-3 border-b border-zinc-800/80 pb-4">
+          <div className="flex flex-wrap items-center gap-3 text-sm text-zinc-300">
+            <span>服务:</span>
+            <span className="text-emerald-300">✅ running×{runningServices}</span>
+            <span className="text-rose-300">❌ stopped×{stoppedServices}</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {server.services.length === 0 ? (
+              <span className="text-sm text-zinc-500">暂无服务数据</span>
+            ) : (
+              server.services.map((service) => <ServiceBadge key={`${server.id}-${service.name}`} service={service} />)
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+            <div className="text-zinc-300">SSH: <span className={server.ssh_reachable ? 'text-emerald-300' : 'text-rose-300'}>{sshLabel}</span> {server.ip}:{server.ssh_port}</div>
+            <div className={alertCount > 0 ? 'text-rose-300' : 'text-zinc-400'}>Alerts: {alertCount}</div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <span className="text-sm text-zinc-500">Tags:</span>
+            {server.tags.length === 0 ? (
+              <span className="text-sm text-zinc-500">—</span>
+            ) : (
+              server.tags.map((tag) => (
+                <Badge key={`${server.id}-${tag}`} variant="outline" className="border-zinc-700 bg-[#18181b] text-zinc-300">
+                  {tag}
+                </Badge>
+              ))
+            )}
+          </div>
+          {server.alerts.length > 0 ? <AlertsPanel alerts={server.alerts} /> : null}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function UsageBar({
+  label,
+  used,
+  total,
+  unit,
+  percent,
+}: {
+  label: string
+  used: number
+  total: number
+  unit: string
+  percent: number
+}) {
+  const color = getUsageBarColor(percent)
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <span className="text-zinc-300">{label}</span>
+        <span className="text-zinc-400">{formatMetricValue(used)}/{formatMetricValue(total)} {unit} ({percent}%)</span>
+      </div>
+      <div className="h-2.5 overflow-hidden rounded-full bg-zinc-800">
+        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  )
+}
+
+function MetricLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-sm">
+      <span className="text-zinc-300">{label}</span>
+      <span className="text-zinc-400">{value}</span>
+    </div>
+  )
+}
+
+function ServiceBadge({ service }: { service: ServerService }) {
+  const running = isServiceRunning(service)
+  return (
+    <span className={running ? 'rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-300' : 'rounded-full border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs text-rose-300'}>
+      {service.name} {running ? '✅' : '❌'}
+    </span>
+  )
+}
+
+function AlertsPanel({ alerts }: { alerts: ServerAlert[] }) {
+  return (
+    <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3">
+      <div className="mb-2 text-sm font-medium text-rose-300">告警</div>
+      <div className="space-y-2 text-sm text-rose-200">
+        {alerts.map((alert, index) => (
+          <div key={`${alert.level}-${alert.message}-${index}`}>
+            <span className="font-medium uppercase">{alert.level}</span>
+            <span className="mx-1 text-rose-300">·</span>
+            <span>{alert.message}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function ProductionSiteRow({ site }: { site: ProductionSite }) {
   return (
     <div className="rounded-xl border border-zinc-800/80 bg-[#111113] p-3">
@@ -322,4 +493,38 @@ function formatPorts(ports?: DashboardContainer['ports']) {
   if (!ports) return '无端口映射'
   if (Array.isArray(ports)) return ports.join(', ') || '无端口映射'
   return ports || '无端口映射'
+}
+
+function formatUptime(seconds?: number) {
+  const totalSeconds = Math.max(0, Math.floor(seconds ?? 0))
+  const days = Math.floor(totalSeconds / 86400)
+  const hours = Math.floor((totalSeconds % 86400) / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+
+  if (days > 0) return `${days}天 ${hours}小时`
+  if (hours > 0) return `${hours}小时 ${minutes}分钟`
+  return `${minutes}分钟`
+}
+
+function computeUsagePct(used?: number, total?: number) {
+  if (!total || total <= 0) return 0
+  return clampPercent(Math.round(((used ?? 0) / total) * 100))
+}
+
+function clampPercent(value?: number) {
+  return Math.min(100, Math.max(0, Math.round(value ?? 0)))
+}
+
+function getUsageBarColor(percent: number) {
+  if (percent < 50) return 'bg-emerald-500'
+  if (percent <= 80) return 'bg-amber-500'
+  return 'bg-rose-500'
+}
+
+function isServiceRunning(service: ServerService) {
+  return String(service.status || '').toLowerCase() === 'running'
+}
+
+function formatMetricValue(value?: number) {
+  return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 1 }).format(value ?? 0)
 }
