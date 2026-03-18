@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { MessageSquare, Send, X, ChevronUp, ChevronDown, Loader2 } from "lucide-react"
 
 import type { OpsPost } from "@/lib/api"
-import { sendOpsMessage, getOpsMessages } from "@/lib/api"
+import { sendOpsMessage } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 export interface CommandTarget {
@@ -24,14 +24,14 @@ type ChatState = {
   channelId: string | null
   messages: OpsPost[]
   chatOpen: boolean
-  pollingSince: number | null
+  waitingSince: number | null // timestamp when we started waiting for a reply
 }
 
 const EMPTY_CHAT_STATE: ChatState = {
   channelId: null,
   messages: [],
   chatOpen: false,
-  pollingSince: null,
+  waitingSince: null,
 }
 
 export function CommandBar({ target, onClearTarget }: CommandBarProps) {
@@ -39,16 +39,62 @@ export function CommandBar({ target, onClearTarget }: CommandBarProps) {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [chatByTarget, setChatByTarget] = useState<Record<string, ChatState>>({})
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pollCountRef = useRef(0)
+  const [sseConnected, setSseConnected] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const eventSourceRef = useRef<EventSource | null>(null)
   const activeTargetKey = target ? `${target.kind ?? "bot"}:${target.id}` : null
   const activeChat = useMemo(() => {
     if (!activeTargetKey) return EMPTY_CHAT_STATE
     return chatByTarget[activeTargetKey] ?? EMPTY_CHAT_STATE
   }, [activeTargetKey, chatByTarget])
-  const { channelId, messages, chatOpen, pollingSince } = activeChat
+  const { messages, chatOpen, waitingSince } = activeChat
+
+  // ── SSE connection (singleton, persists across target switches) ──
+  useEffect(() => {
+    const es = new EventSource("/api/ops/stream")
+    eventSourceRef.current = es
+
+    es.onopen = () => setSseConnected(true)
+
+    es.addEventListener("new_message", (e) => {
+      try {
+        const post: OpsPost = JSON.parse(e.data)
+        if (!post.channel_id) return
+        // Find which target this channel belongs to and append message
+        setChatByTarget((prev) => {
+          const updated = { ...prev }
+          for (const [key, state] of Object.entries(updated)) {
+            if (state.channelId === post.channel_id) {
+              const existingIds = new Set(state.messages.map((p) => p.id))
+              if (!existingIds.has(post.id)) {
+                updated[key] = {
+                  ...state,
+                  messages: [...state.messages, post],
+                  chatOpen: true,
+                  waitingSince: null, // got a reply, stop waiting
+                }
+              }
+              break
+            }
+          }
+          return updated
+        })
+      } catch {
+        // ignore
+      }
+    })
+
+    es.onerror = () => {
+      setSseConnected(false)
+      // EventSource auto-reconnects
+    }
+
+    return () => {
+      es.close()
+      eventSourceRef.current = null
+    }
+  }, [])
 
   // Auto-scroll chat to bottom
   useEffect(() => {
@@ -69,70 +115,23 @@ export function CommandBar({ target, onClearTarget }: CommandBarProps) {
     return () => window.clearTimeout(t)
   }, [error])
 
-  // Cleanup polling on unmount
+  // Timeout waiting indicator after 5 minutes
   useEffect(() => {
-    return () => {
-      if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
-    }
-  }, [])
+    if (!waitingSince) return
+    const timeout = window.setTimeout(() => {
+      if (!activeTargetKey) return
+      setChatByTarget((prev) => ({
+        ...prev,
+        [activeTargetKey]: {
+          ...(prev[activeTargetKey] ?? EMPTY_CHAT_STATE),
+          waitingSince: null,
+        },
+      }))
+    }, 5 * 60 * 1000)
+    return () => window.clearTimeout(timeout)
+  }, [waitingSince, activeTargetKey])
 
-  // Poll for replies after sending
-  const startPolling = useCallback((targetKey: string, chId: string, sinceTs: number) => {
-    if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
-    pollCountRef.current = 0
-    setChatByTarget((prev) => ({
-      ...prev,
-      [targetKey]: {
-        ...(prev[targetKey] ?? EMPTY_CHAT_STATE),
-        pollingSince: sinceTs,
-      },
-    }))
-
-    const poll = async () => {
-      try {
-        const result = await getOpsMessages(chId, sinceTs)
-        const posts = result?.posts ?? []
-        if (posts.length > 0) {
-          setChatByTarget((prev) => {
-            const current = prev[targetKey] ?? EMPTY_CHAT_STATE
-            const existingIds = new Set(current.messages.map((p) => p.id))
-            const newPosts = posts.filter((p) => !existingIds.has(p.id))
-            return newPosts.length > 0
-              ? {
-                  ...prev,
-                  [targetKey]: {
-                    ...current,
-                    messages: [...current.messages, ...newPosts],
-                  },
-                }
-              : prev
-          })
-        }
-      } catch {
-        // Silently ignore polling errors
-      }
-
-      pollCountRef.current += 1
-      // Poll up to 60 times: first 20 at 3s, then 40 at 5s = ~4 min total
-      const maxPolls = 60
-      const interval = pollCountRef.current < 20 ? 3000 : 5000
-      if (pollCountRef.current < maxPolls) {
-        pollTimerRef.current = setTimeout(poll, interval)
-      } else {
-        setChatByTarget((prev) => ({
-          ...prev,
-          [targetKey]: {
-            ...(prev[targetKey] ?? EMPTY_CHAT_STATE),
-            pollingSince: null,
-          },
-        }))
-      }
-    }
-
-    pollTimerRef.current = setTimeout(poll, 3000)
-  }, [])
-
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     if (!target || !activeTargetKey || !input.trim() || sending) return
 
     const msg = input.trim()
@@ -146,7 +145,7 @@ export function CommandBar({ target, onClearTarget }: CommandBarProps) {
         return
       }
 
-      const chId = result.channel_id ?? channelId
+      const chId = result.channel_id ?? activeChat.channelId
 
       // Add our sent message locally
       const sentPost: OpsPost = {
@@ -163,21 +162,17 @@ export function CommandBar({ target, onClearTarget }: CommandBarProps) {
           ...(prev[activeTargetKey] ?? EMPTY_CHAT_STATE),
           channelId: chId,
           chatOpen: true,
-          messages: [...((prev[activeTargetKey] ?? EMPTY_CHAT_STATE).messages), sentPost],
+          messages: [...(prev[activeTargetKey] ?? EMPTY_CHAT_STATE).messages, sentPost],
+          waitingSince: Date.now(),
         },
       }))
       setInput("")
-
-      // Start polling for reply — use create_at from sent post minus 1s to avoid race
-      if (chId) {
-        startPolling(activeTargetKey, chId, Date.now() - 1000)
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "发送失败")
     } finally {
       setSending(false)
     }
-  }
+  }, [target, activeTargetKey, input, sending, activeChat.channelId])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -186,7 +181,7 @@ export function CommandBar({ target, onClearTarget }: CommandBarProps) {
     }
   }
 
-  const isPolling = pollingSince !== null
+  const isWaiting = waitingSince !== null
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-50 pointer-events-none">
@@ -197,11 +192,14 @@ export function CommandBar({ target, onClearTarget }: CommandBarProps) {
             <div className="flex items-center justify-between border-b border-zinc-800/60 px-4 py-2">
               <span className="text-xs font-medium text-zinc-400">
                 对话 {target ? `· ${target.emoji} ${target.name}` : ""}
-                {isPolling && (
+                {isWaiting && (
                   <span className="ml-2 inline-flex items-center gap-1 text-emerald-400">
                     <Loader2 className="h-3 w-3 animate-spin" />
                     等待回复
                   </span>
+                )}
+                {!sseConnected && (
+                  <span className="ml-2 text-amber-400/70">⚠ 连接断开</span>
                 )}
               </span>
               <button
@@ -237,8 +235,8 @@ export function CommandBar({ target, onClearTarget }: CommandBarProps) {
                   </div>
                 )
               })}
-              {/* Waiting indicator while polling */}
-              {isPolling && (
+              {/* Waiting indicator */}
+              {isWaiting && (
                 <div className="flex items-center gap-2 rounded-xl px-4 py-3 mr-auto">
                   <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
                   <span className="text-xs text-zinc-500">等待 {target?.name ?? "Bot"} 回复…</span>

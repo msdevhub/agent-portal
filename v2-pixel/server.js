@@ -1022,6 +1022,8 @@ app.post('/api/ops/send', async (req, res) => {
     const post = await postRes.json();
 
     res.json({ ok: true, post_id: post.id, channel_id: channel.id });
+    // Auto-track this channel for SSE push
+    trackChannel(channel.id);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1063,6 +1065,216 @@ app.get('/api/ops/messages', async (req, res) => {
   }
 });
 
+// ══════════════ SSE + Mattermost WebSocket ══════════════
+
+const https = require('https');
+const http = require('http');
+
+/** @type {Set<import('express').Response>} */
+const sseClients = new Set();
+
+// Track which channels we care about (portalops DM channels)
+const trackedChannels = new Set();
+
+app.get('/api/ops/stream', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(':\n\n'); // comment to flush
+  sseClients.add(res);
+  req.on('close', () => sseClients.delete(res));
+});
+
+function broadcastSSE(event, data) {
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const client of sseClients) {
+    client.write(payload);
+  }
+}
+
+/** Track a channel so we forward its messages via SSE */
+function trackChannel(channelId) {
+  trackedChannels.add(channelId);
+}
+
+// ── Mattermost WebSocket client (pure Node, no deps) ──
+
+let mmWsAlive = false;
+let mmWsReconnectTimer = null;
+let mmWsSeq = 1;
+
+function connectMmWebSocket() {
+  const wsUrl = MM_BASE_URL.replace(/^http/, 'ws') + '/api/v4/websocket';
+  const isSecure = wsUrl.startsWith('wss');
+  const mod = isSecure ? https : http;
+  const urlObj = new URL(wsUrl);
+
+  const reqOptions = {
+    hostname: urlObj.hostname,
+    port: urlObj.port || (isSecure ? 443 : 80),
+    path: urlObj.pathname,
+    headers: {
+      Connection: 'Upgrade',
+      Upgrade: 'websocket',
+      'Sec-WebSocket-Version': '13',
+      'Sec-WebSocket-Key': Buffer.from(Array.from({ length: 16 }, () => Math.floor(Math.random() * 256))).toString('base64'),
+    },
+  };
+
+  const req = mod.request(reqOptions);
+  req.end();
+
+  req.on('upgrade', (_res, socket) => {
+    console.log('[MM-WS] Connected');
+    mmWsAlive = true;
+
+    // Authenticate
+    const authMsg = JSON.stringify({ seq: mmWsSeq++, action: 'authentication_challenge', data: { token: PORTAL_OPS_TOKEN } });
+    sendWsFrame(socket, authMsg);
+
+    let buffer = Buffer.alloc(0);
+
+    socket.on('data', (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      // Parse WebSocket frames
+      while (buffer.length >= 2) {
+        const parsed = parseWsFrame(buffer);
+        if (!parsed) break;
+        buffer = parsed.rest;
+        if (parsed.opcode === 0x1) { // text frame
+          handleMmEvent(parsed.payload);
+        } else if (parsed.opcode === 0x9) { // ping
+          sendWsFrame(socket, '', 0xa); // pong
+        } else if (parsed.opcode === 0x8) { // close
+          console.log('[MM-WS] Server closed connection');
+          socket.destroy();
+          return;
+        }
+      }
+    });
+
+    socket.on('close', () => {
+      console.log('[MM-WS] Disconnected');
+      mmWsAlive = false;
+      scheduleMmReconnect();
+    });
+
+    socket.on('error', (err) => {
+      console.error('[MM-WS] Socket error:', err.message);
+      mmWsAlive = false;
+      socket.destroy();
+      scheduleMmReconnect();
+    });
+
+    // Keep-alive ping every 30s
+    const pingInterval = setInterval(() => {
+      if (socket.destroyed) { clearInterval(pingInterval); return; }
+      sendWsFrame(socket, '', 0x9);
+    }, 30000);
+  });
+
+  req.on('error', (err) => {
+    console.error('[MM-WS] Connection error:', err.message);
+    scheduleMmReconnect();
+  });
+}
+
+function scheduleMmReconnect() {
+  if (mmWsReconnectTimer) return;
+  mmWsReconnectTimer = setTimeout(() => {
+    mmWsReconnectTimer = null;
+    console.log('[MM-WS] Reconnecting...');
+    connectMmWebSocket();
+  }, 5000);
+}
+
+function handleMmEvent(text) {
+  try {
+    const evt = JSON.parse(text);
+    if (evt.event === 'posted') {
+      const post = JSON.parse(evt.data?.post ?? '{}');
+      const channelId = post.channel_id;
+      // Only forward posts from tracked channels and NOT from portalops itself
+      if (channelId && trackedChannels.has(channelId) && post.user_id !== PORTAL_OPS_USER_ID) {
+        broadcastSSE('new_message', {
+          id: post.id,
+          channel_id: channelId,
+          user_id: post.user_id,
+          message: post.message,
+          create_at: post.create_at,
+          update_at: post.update_at,
+        });
+      }
+    }
+  } catch {
+    // ignore parse errors
+  }
+}
+
+// ── Minimal WebSocket frame encoder/decoder (RFC 6455) ──
+
+function sendWsFrame(socket, data, opcode = 0x1) {
+  const payload = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;
+  const len = payload.length;
+  let header;
+  if (len < 126) {
+    header = Buffer.alloc(6);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | len; // masked
+  } else if (len < 65536) {
+    header = Buffer.alloc(8);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(len, 2);
+  } else {
+    header = Buffer.alloc(14);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 127;
+    header.writeBigUInt64BE(BigInt(len), 2);
+  }
+  // Mask key
+  const maskOffset = header.length - 4;
+  const mask = Buffer.from([Math.random() * 256, Math.random() * 256, Math.random() * 256, Math.random() * 256].map(Math.floor));
+  mask.copy(header, maskOffset);
+  const masked = Buffer.alloc(len);
+  for (let i = 0; i < len; i++) masked[i] = payload[i] ^ mask[i % 4];
+  socket.write(Buffer.concat([header, masked]));
+}
+
+function parseWsFrame(buf) {
+  if (buf.length < 2) return null;
+  const opcode = buf[0] & 0x0f;
+  const isMasked = !!(buf[1] & 0x80);
+  let payloadLen = buf[1] & 0x7f;
+  let offset = 2;
+  if (payloadLen === 126) {
+    if (buf.length < 4) return null;
+    payloadLen = buf.readUInt16BE(2);
+    offset = 4;
+  } else if (payloadLen === 127) {
+    if (buf.length < 10) return null;
+    payloadLen = Number(buf.readBigUInt64BE(2));
+    offset = 10;
+  }
+  if (isMasked) {
+    if (buf.length < offset + 4 + payloadLen) return null;
+    const mask = buf.slice(offset, offset + 4);
+    offset += 4;
+    const data = buf.slice(offset, offset + payloadLen);
+    for (let i = 0; i < data.length; i++) data[i] ^= mask[i % 4];
+    return { opcode, payload: data.toString('utf8'), rest: buf.slice(offset + payloadLen) };
+  }
+  if (buf.length < offset + payloadLen) return null;
+  const data = buf.slice(offset, offset + payloadLen);
+  return { opcode, payload: data.toString('utf8'), rest: buf.slice(offset + payloadLen) };
+}
+
+// ── Patch /api/ops/send to auto-track channel ──
+const origSendHandler = app._router?.stack; // we'll patch inline instead
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(STATIC_ROOT, 'index.html'));
 });
@@ -1077,4 +1289,7 @@ app.listen(PORT, () => {
     syncWorkspaceOnce();
     setInterval(syncWorkspaceOnce, SYNC_INTERVAL_MS);
   }, 3000);
+
+  // Connect to Mattermost WebSocket
+  connectMmWebSocket();
 });
