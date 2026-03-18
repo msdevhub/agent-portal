@@ -18,7 +18,6 @@ import {
 } from "@/lib/api"
 import type { DashboardData, Project, Stats } from "@/lib/api"
 import { DashboardPage } from "@/pages/DashboardPage"
-import { HomePage } from "@/pages/ProjectsPage"
 import { ProjectDetailPage } from "@/pages/ProjectDetailPage"
 
 const EMPTY_DASHBOARD: DashboardData = {
@@ -175,20 +174,15 @@ function App() {
     <div className="dark min-h-screen bg-[#09090b] text-zinc-100 selection:bg-emerald-500/30">
       <div className="pointer-events-none fixed inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.14),transparent_46%),radial-gradient(circle_at_78%_12%,rgba(14,165,233,0.1),transparent_24%)]" />
       <div className="relative">
-        {route.page === "home" && (
+        {(route.page === "home" || route.page === "projects") && (
           <DashboardPage
             dashboard={dashboard}
             loading={dashboardLoading}
             refreshing={dashboardRefreshing}
-            onBackToProjects={() => navigateToRoute({ page: "projects" })}
-          />
-        )}
-        {route.page === "projects" && (
-          <HomePage
             stats={stats}
             projects={projects}
             recentNotes={recentNotes}
-            loading={overviewLoading}
+            projectsLoading={overviewLoading}
             onCreateProject={() => setShowCreate(true)}
             onOpenProject={(slug) => navigateToRoute({ page: "project", slug })}
           />
@@ -197,7 +191,7 @@ function App() {
           <ProjectDetailPage
             project={detailProject}
             loading={detailLoading}
-            onBack={() => navigateToRoute({ page: "projects" })}
+            onBack={() => navigateToRoute({ page: "home" })}
             onRefresh={refreshProject}
             onError={showError}
           />
