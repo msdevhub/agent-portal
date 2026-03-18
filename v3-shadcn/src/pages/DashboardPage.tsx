@@ -10,7 +10,6 @@ import { Progress } from "@/components/ui/progress"
 import {
   CompactStatsBar,
   MobileDisclosure,
-  SectionHeading,
   StatCard,
   StatusBadge,
   formatDateTime as sharedFormatDateTime,
@@ -62,10 +61,6 @@ export function DashboardPage({
   const lastUpdated = dashboard.updated_at ?? summary.timestamp ?? null
   const servers = dashboard.servers ?? []
   const agents = dashboard.agents ?? []
-  const cronJobs = dashboard.cron_jobs ?? []
-  const productionSites = dashboard.production_sites ?? []
-  const containers = dashboard.containers ?? []
-
   const serverOnlineCount = servers.filter((s) => s.ssh_reachable).length
 
   return (
@@ -73,7 +68,7 @@ export function DashboardPage({
       {/* Header */}
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-4xl">Agent Portal</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-4xl">Research Fleet Portal</h1>
           <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-500 sm:text-sm">
             <span>最近更新：{formatDateTime(lastUpdated)}</span>
             {refreshing && (
@@ -96,7 +91,7 @@ export function DashboardPage({
 
       {/* Tab Content */}
       {activeTab === "bots" && <BotFleetTab dashboard={dashboard} loading={loading} onSelectTarget={setCommandTarget} />}
-      {activeTab === "servers" && <ServerFleetTab servers={servers} loading={loading} />}
+      {activeTab === "servers" && <ServerFleetTab servers={servers} loading={loading} onSelectTarget={setCommandTarget} />}
       {activeTab === "projects" && (
         <ProjectsTab
           stats={stats}
@@ -287,9 +282,11 @@ function BotCard({ agent, onSelectTarget }: { agent: DashboardAgent; onSelectTar
                 type="button"
                 onClick={() =>
                   onSelectTarget({
+                    id: agent.id,
                     name: agent.name ?? agent.id,
                     emoji: agent.emoji ?? "🤖",
                     user_id: agent.mm_user_id!,
+                    kind: "bot",
                   })
                 }
                 className="rounded-lg border border-zinc-800 bg-[#18181b] p-2 text-zinc-500 transition hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-300"
@@ -411,7 +408,15 @@ function classifyServers(servers: ServerSnapshot[]) {
   return { alertServers, unreachable, coreServers, proxyServers, otherServers }
 }
 
-function ServerFleetTab({ servers, loading }: { servers: ServerSnapshot[]; loading: boolean }) {
+const SERVER_PROXY_TARGET: CommandTarget = {
+  id: "server-proxy-quokka",
+  name: "quokka",
+  emoji: "🖥️",
+  user_id: "3piznyqwiprmurnuke63rkwwmo",
+  kind: "server",
+}
+
+function ServerFleetTab({ servers, loading, onSelectTarget }: { servers: ServerSnapshot[]; loading: boolean; onSelectTarget: (t: CommandTarget) => void }) {
   const [proxyExpanded, setProxyExpanded] = useState(false)
   const [unreachableExpanded, setUnreachableExpanded] = useState(false)
   const onlineCount = servers.filter((s) => s.ssh_reachable).length
@@ -456,7 +461,7 @@ function ServerFleetTab({ servers, loading }: { servers: ServerSnapshot[]; loadi
           {alertServers.length > 0 && (
             <ServerGroup title={`🚨 告警 (${alertServers.length})`} accent="text-rose-300">
               <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
-                {alertServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="core" />)}
+                {alertServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="core" onSelectTarget={onSelectTarget} />)}
               </div>
             </ServerGroup>
           )}
@@ -470,7 +475,7 @@ function ServerFleetTab({ servers, loading }: { servers: ServerSnapshot[]; loadi
                 coreServers.length === 2 ? "grid-cols-1 lg:grid-cols-2" :
                 "grid-cols-1 lg:grid-cols-2 xl:grid-cols-3"
               )}>
-                {coreServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="core" />)}
+                {coreServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="core" onSelectTarget={onSelectTarget} />)}
               </div>
             </ServerGroup>
           )}
@@ -479,7 +484,7 @@ function ServerFleetTab({ servers, loading }: { servers: ServerSnapshot[]; loadi
           {otherServers.length > 0 && (
             <ServerGroup title={`🖥️ 其他服务 (${otherServers.length})`} accent="text-zinc-300">
               <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
-                {otherServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="core" />)}
+                {otherServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="core" onSelectTarget={onSelectTarget} />)}
               </div>
             </ServerGroup>
           )}
@@ -500,7 +505,7 @@ function ServerFleetTab({ servers, loading }: { servers: ServerSnapshot[]; loadi
                 summary={`${allHealthy ? "全部健康" : "⚠ 部分异常"} · 内存 ${avgMem}% 均 / ${maxMem}% 峰`}
               >
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {proxyServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="compact" />)}
+                  {proxyServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="compact" onSelectTarget={onSelectTarget} />)}
                 </div>
               </ServerGroup>
             )
@@ -517,7 +522,7 @@ function ServerFleetTab({ servers, loading }: { servers: ServerSnapshot[]; loadi
               summary={`${unreachable.length} 台 SSH 不可达`}
             >
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {unreachable.map((s) => <ServerFleetCard key={s.id} server={s} mode="compact" />)}
+                {unreachable.map((s) => <ServerFleetCard key={s.id} server={s} mode="compact" onSelectTarget={onSelectTarget} />)}
               </div>
             </ServerGroup>
           )}
@@ -773,7 +778,7 @@ function MiniStat({ label, value, accentClassName }: { label: string; value: str
 
 /* ═══════════════════ Server Card ═══════════════════ */
 
-function ServerFleetCard({ server, mode = "core" }: { server: ServerSnapshot; mode?: "core" | "compact" }) {
+function ServerFleetCard({ server, mode = "core", onSelectTarget }: { server: ServerSnapshot; mode?: "core" | "compact"; onSelectTarget: (t: CommandTarget) => void }) {
   const [expanded, setExpanded] = useState(false)
   const memoryPct = computeUsagePct(server.memory_used_mb, server.memory_total_mb)
   const diskPct = clampPercent(server.disk_usage_pct || computeUsagePct(server.disk_used_gb, server.disk_total_gb))
@@ -862,6 +867,23 @@ function ServerFleetCard({ server, mode = "core" }: { server: ServerSnapshot; mo
               {worstUsage}%
             </span>
           </div>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onSelectTarget({
+                ...SERVER_PROXY_TARGET,
+                id: `server:${server.id}`,
+                name: server.name,
+                emoji: "🖥️",
+              })
+            }}
+            className="rounded-lg border border-zinc-800 bg-[#18181b] p-2 text-zinc-500 transition hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-300"
+            title={`联系服务器代理处理 ${server.name}`}
+          >
+            <MessageSquare className="h-4 w-4" />
+          </button>
 
           {/* Service count + SSH status */}
           <div className="hidden items-center gap-2 text-[11px] lg:flex">
