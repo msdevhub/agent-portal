@@ -57,6 +57,24 @@ async function dbQuery(sql) {
   return res.json();
 }
 
+// For DDL statements (CREATE TABLE/INDEX etc) that don't return rows
+async function dbExec(sql) {
+  const res = await fetch(`${SUPABASE_URL}/pg/rest/v1/rpc/exec_sql`, {
+    method: 'POST',
+    headers: {
+      apikey: SERVICE_KEY,
+      Authorization: `Bearer ${SERVICE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ sql }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`DB exec error (${res.status}): ${text.slice(0, 300)}`);
+  }
+}
+
 function esc(value) {
   if (value == null) return '';
   return String(value).replace(/'/g, "''");
@@ -112,7 +130,7 @@ function getArtifactId(req) {
 
 app.post('/api/init-db', async (req, res) => {
   try {
-    await dbQuery(`
+    await dbExec(`
       CREATE TABLE IF NOT EXISTS "AP_projects" (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name TEXT NOT NULL,
@@ -126,7 +144,7 @@ app.post('/api/init-db', async (req, res) => {
       );
     `);
 
-    await dbQuery(`
+    await dbExec(`
       CREATE TABLE IF NOT EXISTS "AP_tasks" (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         project_id UUID REFERENCES "AP_projects"(id) ON DELETE CASCADE,
@@ -140,7 +158,7 @@ app.post('/api/init-db', async (req, res) => {
       );
     `);
 
-    await dbQuery(`
+    await dbExec(`
       CREATE TABLE IF NOT EXISTS "AP_notes" (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         project_id UUID REFERENCES "AP_projects"(id) ON DELETE CASCADE,
@@ -150,7 +168,7 @@ app.post('/api/init-db', async (req, res) => {
       );
     `);
 
-    await dbQuery(`
+    await dbExec(`
       CREATE TABLE IF NOT EXISTS "AP_artifacts" (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         project_id UUID REFERENCES "AP_projects"(id) ON DELETE CASCADE,
@@ -163,7 +181,7 @@ app.post('/api/init-db', async (req, res) => {
       );
     `);
 
-    await dbQuery(`
+    await dbExec(`
       CREATE TABLE IF NOT EXISTS "AP_timeline" (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         project_id UUID REFERENCES "AP_projects"(id) ON DELETE CASCADE,
@@ -174,10 +192,10 @@ app.post('/api/init-db', async (req, res) => {
       );
     `);
 
-    await dbQuery(`CREATE INDEX IF NOT EXISTS "AP_tasks_project_id_idx" ON "AP_tasks"(project_id);`);
-    await dbQuery(`CREATE INDEX IF NOT EXISTS "AP_notes_project_id_idx" ON "AP_notes"(project_id);`);
-    await dbQuery(`CREATE INDEX IF NOT EXISTS "AP_artifacts_project_id_idx" ON "AP_artifacts"(project_id);`);
-    await dbQuery(`CREATE INDEX IF NOT EXISTS "AP_timeline_project_id_idx" ON "AP_timeline"(project_id, created_at);`);
+    await dbExec(`CREATE INDEX IF NOT EXISTS "AP_tasks_project_id_idx" ON "AP_tasks"(project_id);`);
+    await dbExec(`CREATE INDEX IF NOT EXISTS "AP_notes_project_id_idx" ON "AP_notes"(project_id);`);
+    await dbExec(`CREATE INDEX IF NOT EXISTS "AP_artifacts_project_id_idx" ON "AP_artifacts"(project_id);`);
+    await dbExec(`CREATE INDEX IF NOT EXISTS "AP_timeline_project_id_idx" ON "AP_timeline"(project_id, created_at);`);
 
     res.json({ ok: true, message: 'Tables created' });
   } catch (error) {
@@ -229,21 +247,33 @@ app.get('/api/dashboard/history', async (req, res) => {
   try {
     const limit = Number(req.query.limit || 120);
     const rows = await dbQuery(`
-      SELECT snapshot_time AS ts FROM "AP_agent_checks"
+      SELECT snapshot_time AS ts, 'bot' AS source FROM "AP_agent_checks"
       UNION
-      SELECT snapshot_time AS ts FROM "AP_server_snapshots"
+      SELECT snapshot_time AS ts, 'server' AS source FROM "AP_server_snapshots"
       ORDER BY ts DESC
       LIMIT ${limit}
     `);
-    const deduped = [];
-    const seen = new Set();
-    for (const row of rows) {
+    // Deduplicate by timestamp + source, group into bot/server arrays
+    const botPoints = [];
+    const serverPoints = [];
+    const seenBot = new Set();
+    const seenServer = new Set();
+    for (const row of rows ?? []) {
       const iso = row.ts ? new Date(row.ts).toISOString() : null;
-      if (!iso || seen.has(iso)) continue;
-      seen.add(iso);
-      deduped.push(iso);
+      if (!iso) continue;
+      if (row.source === 'bot' && !seenBot.has(iso)) {
+        seenBot.add(iso);
+        botPoints.push(iso);
+      }
+      if (row.source === 'server' && !seenServer.has(iso)) {
+        seenServer.add(iso);
+        serverPoints.push(iso);
+      }
     }
-    res.json({ points: deduped });
+    // Also provide merged deduplicated points for backward compat
+    const allSet = new Set([...botPoints, ...serverPoints]);
+    const points = [...allSet].sort((a, b) => b.localeCompare(a));
+    res.json({ points, botPoints, serverPoints });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
