@@ -796,7 +796,7 @@ function ServerFleetCard({ server, mode = "core" }: { server: ServerSnapshot; mo
   return (
     <Card className={cn(
       "shadow-none transition-colors",
-      hasAlerts ? "border-l-2 border-l-rose-500 border-t-zinc-800/80 border-r-zinc-800/80 border-b-zinc-800/80 bg-rose-500/5" :
+      hasAlerts ? "border-l-2 border-l-rose-500 border-t-zinc-800/80 border-r-zinc-800/80 border-b-zinc-800/80 bg-rose-500/5 shadow-[inset_2px_0_8px_-4px_rgba(244,63,94,0.3)]" :
       !server.ssh_reachable ? "border-rose-500/40 bg-[#111113]" :
       "border-zinc-800/80 bg-[#111113]"
     )}>
@@ -850,7 +850,12 @@ function ServerFleetCard({ server, mode = "core" }: { server: ServerSnapshot; mo
         {/* Core card: inline service badges when not expanded */}
         {!expanded && services.length > 0 && (
           <div className="flex flex-wrap gap-1 border-t border-zinc-800/40 px-4 py-2">
-            {services.map((service) => <ServiceBadge key={`${server.id}-${service.name}-inline`} service={service} />)}
+            {services.slice(0, 8).map((service) => <ServiceBadge key={`${server.id}-${service.name}-inline`} service={service} />)}
+            {services.length > 8 && (
+              <Badge variant="outline" className="border-zinc-700 bg-[#18181b] text-[10px] text-zinc-500">
+                +{services.length - 8}
+              </Badge>
+            )}
           </div>
         )}
 
