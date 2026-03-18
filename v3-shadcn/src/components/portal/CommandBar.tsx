@@ -113,8 +113,11 @@ export function CommandBar({ target, onClearTarget }: CommandBarProps) {
       }
 
       pollCountRef.current += 1
-      if (pollCountRef.current < 10) {
-        pollTimerRef.current = setTimeout(poll, 3000)
+      // Poll up to 60 times: first 20 at 3s, then 40 at 5s = ~4 min total
+      const maxPolls = 60
+      const interval = pollCountRef.current < 20 ? 3000 : 5000
+      if (pollCountRef.current < maxPolls) {
+        pollTimerRef.current = setTimeout(poll, interval)
       } else {
         setChatByTarget((prev) => ({
           ...prev,
@@ -234,6 +237,13 @@ export function CommandBar({ target, onClearTarget }: CommandBarProps) {
                   </div>
                 )
               })}
+              {/* Waiting indicator while polling */}
+              {isPolling && (
+                <div className="flex items-center gap-2 rounded-xl px-4 py-3 mr-auto">
+                  <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
+                  <span className="text-xs text-zinc-500">等待 {target?.name ?? "Bot"} 回复…</span>
+                </div>
+              )}
               <div ref={messagesEndRef} />
             </div>
           </div>
