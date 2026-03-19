@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { Activity, Bot, ChevronDown, ExternalLink, FlaskConical, MessageSquare, Monitor, Plus, RefreshCw, Server, Timer } from "lucide-react"
+import { Activity, AlertTriangle, Bot, ChevronDown, ExternalLink, FlaskConical, MessageSquare, Monitor, Plus, RefreshCw, Server, Timer } from "lucide-react"
 
 import { UserMenu } from "@/components/auth/UserMenu"
 import { CommandBar } from "@/components/portal/CommandBar"
@@ -65,10 +65,29 @@ export function DashboardPage({
   const summary = dashboard.summary ?? {}
   const lastUpdated = dashboard.updated_at ?? summary.timestamp ?? null
   const asOf = dashboard.as_of ?? lastUpdated ?? null
+  const isHistoryMode = selectedAsOf !== null
   const historyIndex = selectedAsOf ? Math.max(historyPoints.findIndex((point) => point === selectedAsOf), 0) : 0
   const servers = dashboard.servers ?? []
   const agents = dashboard.agents ?? []
   const serverOnlineCount = servers.filter((s) => s.ssh_reachable).length
+  const serverSnapshotTimes = useMemo(() => collectServerSnapshotTimes(servers), [servers])
+  const botSnapshotTime = summary.timestamp ?? findNearestHistoryPoint(historyBotPoints, selectedAsOf) ?? asOf
+  const serverSnapshotTime = serverSnapshotTimes[0] ?? findNearestHistoryPoint(historyServerPoints, selectedAsOf)
+  const crossFleetMismatch = !areSameSnapshotTime(botSnapshotTime, serverSnapshotTime)
+  const fleetsOutOfSync = isHistoryMode && (
+    serverSnapshotTimes.length > 1 ||
+    crossFleetMismatch
+  )
+  const snapshotNotice = isHistoryMode
+    ? [
+        crossFleetMismatch
+          ? "Bot Fleet 与 Server Fleet 没有共用同一快照时间"
+          : null,
+        serverSnapshotTimes.length > 1
+          ? "Server Fleet 内部包含多个 snapshot_time"
+          : null,
+      ].filter(Boolean).join("；")
+    : ""
 
   return (
     <main className="flex min-h-screen w-full flex-col gap-5 px-4 py-5 pb-24 sm:gap-8 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
@@ -95,30 +114,53 @@ export function DashboardPage({
         serverPoints={historyServerPoints}
         value={selectedAsOf}
         currentIndex={historyIndex}
-        currentLabel={asOf}
+        latestLabel={asOf}
+        botSnapshotTime={botSnapshotTime}
+        serverSnapshotTime={serverSnapshotTime}
+        serverSnapshotTimes={serverSnapshotTimes}
+        snapshotNotice={snapshotNotice}
+        fleetsOutOfSync={fleetsOutOfSync}
         onChange={onSelectAsOf}
       />
 
-      {/* Tab Bar */}
-      <div className="flex flex-wrap gap-2">
-        <TabButton active={activeTab === "bots"} onClick={() => setActiveTab("bots")} icon={Bot} label="🤖 Bot Fleet" count={agents.length} />
-        <TabButton active={activeTab === "servers"} onClick={() => setActiveTab("servers")} icon={Monitor} label="🖥️ Server Fleet" count={`${serverOnlineCount}/${servers.length}`} />
-        <TabButton active={activeTab === "projects"} onClick={() => setActiveTab("projects")} icon={FlaskConical} label="📋 项目列表" count={projects.length} />
-      </div>
+      <div
+        className={cn(
+          "space-y-6",
+          isHistoryMode && "rounded-[30px] border border-stone-200/10 bg-[linear-gradient(180deg,rgba(241,238,232,0.07),rgba(241,238,232,0.03))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] sm:p-5 lg:p-6",
+        )}
+      >
+        {isHistoryMode && (
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.035] px-3 py-2 text-xs text-zinc-300">
+            <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 font-medium text-zinc-100">
+              历史查看模式
+            </span>
+            <span className="text-zinc-400">
+              主内容区按 Bot Fleet / Server Fleet 各自的实际快照时间渲染。
+            </span>
+          </div>
+        )}
 
-      {/* Tab Content */}
-      {activeTab === "bots" && <BotFleetTab dashboard={dashboard} loading={loading} onSelectTarget={setCommandTarget} />}
-      {activeTab === "servers" && <ServerFleetTab servers={servers} loading={loading} onSelectTarget={setCommandTarget} />}
-      {activeTab === "projects" && (
-        <ProjectsTab
-          stats={stats}
-          projects={projects}
-          recentNotes={recentNotes}
-          loading={projectsLoading}
-          onCreateProject={onCreateProject}
-          onOpenProject={onOpenProject}
-        />
-      )}
+        {/* Tab Bar */}
+        <div className="flex flex-wrap gap-2">
+          <TabButton active={activeTab === "bots"} onClick={() => setActiveTab("bots")} icon={Bot} label="🤖 Bot Fleet" count={agents.length} />
+          <TabButton active={activeTab === "servers"} onClick={() => setActiveTab("servers")} icon={Monitor} label="🖥️ Server Fleet" count={`${serverOnlineCount}/${servers.length}`} />
+          <TabButton active={activeTab === "projects"} onClick={() => setActiveTab("projects")} icon={FlaskConical} label="📋 项目列表" count={projects.length} />
+        </div>
+
+        {/* Tab Content */}
+        {activeTab === "bots" && <BotFleetTab dashboard={dashboard} loading={loading} onSelectTarget={setCommandTarget} />}
+        {activeTab === "servers" && <ServerFleetTab servers={servers} loading={loading} onSelectTarget={setCommandTarget} />}
+        {activeTab === "projects" && (
+          <ProjectsTab
+            stats={stats}
+            projects={projects}
+            recentNotes={recentNotes}
+            loading={projectsLoading}
+            onCreateProject={onCreateProject}
+            onOpenProject={onOpenProject}
+          />
+        )}
+      </div>
 
       {/* Command Bar */}
       <CommandBar target={commandTarget} onClearTarget={() => setCommandTarget(null)} />
@@ -128,18 +170,39 @@ export function DashboardPage({
 
 /* ═══════════════════ Tab Button ═══════════════════ */
 
-function TimeMachineBar({ points, botPoints, serverPoints, value, currentIndex, currentLabel, onChange }: {
+function TimeMachineBar({
+  points,
+  botPoints,
+  serverPoints,
+  value,
+  currentIndex,
+  latestLabel,
+  botSnapshotTime,
+  serverSnapshotTime,
+  serverSnapshotTimes,
+  snapshotNotice,
+  fleetsOutOfSync,
+  onChange,
+}: {
   points: string[]
   botPoints?: string[]
   serverPoints?: string[]
   value: string | null
   currentIndex: number
-  currentLabel: string | null
+  latestLabel: string | null
+  botSnapshotTime: string | null
+  serverSnapshotTime: string | null
+  serverSnapshotTimes: string[]
+  snapshotNotice: string
+  fleetsOutOfSync: boolean
   onChange: (value: string | null) => void
 }) {
   const canTravel = points.length > 1
   const bots = botPoints ?? []
   const servers = serverPoints ?? []
+  const isHistoryMode = value !== null
+  const hasMixedServerSnapshots = serverSnapshotTimes.length > 1
+  const oldestServerSnapshot = hasMixedServerSnapshots ? serverSnapshotTimes[serverSnapshotTimes.length - 1] : null
 
   // Build tick marks for the slider
   const tickPositions = useMemo(() => {
@@ -156,9 +219,11 @@ function TimeMachineBar({ points, botPoints, serverPoints, value, currentIndex, 
       <CardContent className="space-y-4 px-4 py-5 sm:px-5">
         <div className="flex flex-wrap items-center gap-3">
           <div>
-            <div className="text-sm font-semibold text-zinc-100">🕰️ 时光机</div>
+            <div className="text-sm font-semibold text-zinc-100">🕰️ 历史查看模式</div>
             <div className="mt-1 text-xs text-zinc-500">
-              {value ? `正在查看 ${formatDateTime(currentLabel)} 的快照` : `当前最新快照 · ${formatDateTime(currentLabel)}`}
+              {isHistoryMode
+                ? `请求时间：${formatDateTime(value)} · Bot Fleet / Server Fleet 会分别使用各自最近可用的 snapshot/as-of 时间`
+                : `当前展示最新视图 · 最新可用时间 ${formatDateTime(latestLabel)}`}
             </div>
           </div>
           <div className="ml-auto flex items-center gap-2">
@@ -183,6 +248,35 @@ function TimeMachineBar({ points, botPoints, serverPoints, value, currentIndex, 
             </span>
           </div>
         </div>
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          <HistorySnapshotCard
+            icon={Bot}
+            title="Bot Fleet as-of"
+            value={formatDateTime(botSnapshotTime)}
+            detail={isHistoryMode ? "按 bot 侧实际 as-of 渲染" : "当前 bot 最新快照"}
+          />
+          <HistorySnapshotCard
+            icon={Monitor}
+            title="Server Fleet snapshot_time"
+            value={hasMixedServerSnapshots ? "多批次快照" : formatDateTime(serverSnapshotTime)}
+            detail={
+              hasMixedServerSnapshots
+                ? `最早 ${formatDateTime(oldestServerSnapshot)} · 最新 ${formatDateTime(serverSnapshotTimes[0])}`
+                : isHistoryMode
+                  ? "按 server 侧实际 snapshot_time 渲染"
+                  : "当前 server 最新快照"
+            }
+            tone={hasMixedServerSnapshots ? "warn" : "default"}
+          />
+        </div>
+
+        {fleetsOutOfSync && snapshotNotice && (
+          <div className="flex items-start gap-2 rounded-2xl border border-amber-200/15 bg-amber-50/6 px-3 py-2.5 text-xs text-amber-100/85">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-200/80" />
+            <span>时间不同步：{snapshotNotice}。界面已按各自最近可用快照展示，而不是假装使用同一时间点。</span>
+          </div>
+        )}
 
         {/* Slider track with bigger thumb */}
         <div className="space-y-1">
@@ -229,6 +323,44 @@ function TimeMachineBar({ points, botPoints, serverPoints, value, currentIndex, 
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+function HistorySnapshotCard({ icon: Icon, title, value, detail, tone = "default" }: {
+  icon: React.ElementType
+  title: string
+  value: string
+  detail: string
+  tone?: "default" | "warn"
+}) {
+  return (
+    <div className={cn(
+      "rounded-2xl border px-3.5 py-3",
+      tone === "warn"
+        ? "border-amber-200/12 bg-amber-50/5"
+        : "border-zinc-800/80 bg-[#18181b]/70",
+    )}>
+      <div className="flex items-start gap-3">
+        <div className={cn(
+          "rounded-xl border p-2",
+          tone === "warn"
+            ? "border-amber-200/12 bg-amber-100/6 text-amber-100/85"
+            : "border-zinc-800 bg-[#111113] text-zinc-400",
+        )}>
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">{title}</div>
+          <div className={cn(
+            "mt-1 text-sm font-semibold",
+            tone === "warn" ? "text-amber-50/90" : "text-zinc-100",
+          )}>
+            {value}
+          </div>
+          <div className="mt-1 text-xs leading-5 text-zinc-500">{detail}</div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -1174,6 +1306,45 @@ function formatDateTime(value?: string | null) {
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return "—"
   return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(d)
+}
+
+function toTimestamp(value?: string | null) {
+  if (!value) return null
+  const ts = new Date(value).getTime()
+  return Number.isNaN(ts) ? null : ts
+}
+
+function findNearestHistoryPoint(points: string[] | undefined, requested?: string | null) {
+  const sourcePoints = points ?? []
+  if (sourcePoints.length === 0) return null
+  if (!requested) return sourcePoints[0] ?? null
+
+  const requestedTs = toTimestamp(requested)
+  if (requestedTs === null) return sourcePoints.find((point) => point === requested) ?? sourcePoints[0] ?? null
+
+  for (const point of sourcePoints) {
+    const pointTs = toTimestamp(point)
+    if (pointTs !== null && pointTs <= requestedTs) return point
+    if (point === requested) return point
+  }
+
+  return sourcePoints[sourcePoints.length - 1] ?? null
+}
+
+function collectServerSnapshotTimes(servers: ServerSnapshot[]) {
+  return Array.from(new Set(
+    servers
+      .map((server) => server.snapshot_time)
+      .filter((snapshotTime): snapshotTime is string => Boolean(snapshotTime)),
+  )).sort((a, b) => (toTimestamp(b) ?? 0) - (toTimestamp(a) ?? 0))
+}
+
+function areSameSnapshotTime(left?: string | null, right?: string | null) {
+  if (!left || !right) return false
+  const leftTs = toTimestamp(left)
+  const rightTs = toTimestamp(right)
+  if (leftTs !== null && rightTs !== null) return leftTs === rightTs
+  return left === right
 }
 
 function formatUptime(seconds?: number) {

@@ -3,3 +3,10 @@ dist/
 .vite/
 *.log
 .DS_Store
+
+# Deployment output / generated static files
+v2-pixel/public/**
+!v2-pixel/public/
+!v2-pixel/public/.gitkeep
+v2-pixel/public-v2-backup/**
+v2-pixel/public.v2-backup/**
