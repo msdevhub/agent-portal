@@ -11,6 +11,7 @@ export default defineConfig({
     },
   },
   server: {
+    port: 3013,
     allowedHosts: ['portal.dev.dora.restry.cn', 'dev.dora.restry.cn'],
     proxy: {
       '/api': 'http://localhost:3019',

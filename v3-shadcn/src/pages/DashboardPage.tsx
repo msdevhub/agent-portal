@@ -17,6 +17,7 @@ import {
   truncateInlineText,
 } from "@/components/portal/shared"
 import type {
+  CronJob,
   DashboardAgent,
   DashboardData,
   Project,
@@ -395,6 +396,24 @@ function TabButton({ active, onClick, icon: Icon, label, count }: {
 function BotFleetTab({ dashboard, loading, onSelectTarget }: { dashboard: DashboardData; loading: boolean; onSelectTarget: (t: CommandTarget) => void }) {
   const summary = dashboard.summary ?? {}
   const agents = dashboard.agents ?? []
+  const allCronJobs = dashboard.cron_jobs ?? []
+  const agentIds = new Set(agents.map((a) => a.id))
+
+  // Group cron jobs by agent
+  const cronsByAgent = useMemo(() => {
+    const map: Record<string, typeof allCronJobs> = {}
+    for (const job of allCronJobs) {
+      const key = job.agent ?? "_orphan"
+      ;(map[key] ??= []).push(job)
+    }
+    return map
+  }, [allCronJobs])
+
+  // Orphan crons: agent not in the bot list
+  const orphanCrons = useMemo(() =>
+    allCronJobs.filter((j) => !agentIds.has(j.agent ?? "")),
+    [allCronJobs, agentIds],
+  )
 
   const overviewCards = useMemo(() => [
     {
@@ -454,63 +473,32 @@ function BotFleetTab({ dashboard, loading, onSelectTarget }: { dashboard: Dashbo
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {agents.map((agent) => (
-              <BotCard key={agent.id} agent={agent} onSelectTarget={onSelectTarget} />
+              <BotCard key={agent.id} agent={agent} cronJobs={cronsByAgent[agent.id] ?? []} onSelectTarget={onSelectTarget} />
             ))}
           </div>
         )}
       </section>
 
-      {/* Cron Jobs table */}
-      <Card className="border-zinc-800/80 bg-[#18181b] shadow-none">
-        <CardHeader>
-          <CardTitle className="text-zinc-50">Cron Jobs</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {(dashboard.cron_jobs ?? []).length === 0 ? (
-            <EmptyRow text="暂无 Cron Jobs 数据" />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="border-b border-zinc-800 text-left text-xs text-zinc-500">
-                    <th className="px-3 py-3 font-medium">名称</th>
-                    <th className="px-3 py-3 font-medium">Agent</th>
-                    <th className="px-3 py-3 font-medium">周期</th>
-                    <th className="px-3 py-3 font-medium">状态</th>
-                    <th className="px-3 py-3 font-medium">上次时间</th>
-                    <th className="px-3 py-3 font-medium text-right">连续错误</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(dashboard.cron_jobs ?? []).map((job) => (
-                    <tr key={job.id} className="border-b border-zinc-900/80 text-zinc-300 last:border-0">
-                      <td className="px-3 py-3 font-medium text-zinc-100">{job.name}</td>
-                      <td className="px-3 py-3">{job.agent || "—"}</td>
-                      <td className="px-3 py-3">{job.schedule || "—"}</td>
-                      <td className="px-3 py-3"><StatusPill ok={job.lastStatus === "ok"}>{job.lastStatus || "—"}</StatusPill></td>
-                      <td className="px-3 py-3 whitespace-nowrap">{formatDateTime(job.lastRun)}</td>
-                      <td className="px-3 py-3 text-right">{job.consecutiveErrors ?? 0}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Orphan Cron Jobs (agents not in bot list) */}
+      {orphanCrons.length > 0 && (
+        <OrphanCronSection jobs={orphanCrons} />
+      )}
     </div>
   )
 }
 
 /* ═══════════════════ Bot Card ═══════════════════ */
 
-function BotCard({ agent, onSelectTarget }: { agent: DashboardAgent; onSelectTarget: (t: CommandTarget) => void }) {
+function BotCard({ agent, cronJobs, onSelectTarget }: { agent: DashboardAgent; cronJobs: CronJob[]; onSelectTarget: (t: CommandTarget) => void }) {
+  const [cronExpanded, setCronExpanded] = useState(false)
   const prod = agent.production
   const dev = agent.dev
   const container = agent.container
   const crons = agent.crons
   const tasks = agent.tasks
   const canMessage = !!agent.mm_user_id
+  const hasDetailedCrons = cronJobs.length > 0
+  const hasErrors = cronJobs.some((j) => j.lastStatus === "error")
 
   return (
     <Card className="border-zinc-800/80 bg-[#111113] shadow-none">
@@ -596,15 +584,18 @@ function BotCard({ agent, onSelectTarget }: { agent: DashboardAgent; onSelectTar
 
         {/* Cron + Tasks row */}
         <div className="flex gap-3">
-          {/* Cron mini */}
+          {/* Cron section */}
           {crons && crons.total > 0 && (
             <div className="flex-1 rounded-xl border border-zinc-800/60 bg-[#18181b]/50 px-3.5 py-2.5">
-              <div className="text-xs font-medium text-zinc-500">Cron</div>
-              <div className="mt-1 flex items-center gap-2 text-sm">
-                <span className="text-emerald-300">{crons.ok} ok</span>
-                {crons.error > 0 && <span className="text-rose-300">{crons.error} err</span>}
-                <span className="text-zinc-600">/ {crons.total}</span>
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium text-zinc-500">Cron</div>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-emerald-300">{crons.ok} ok</span>
+                  {crons.error > 0 && <span className="text-rose-300">{crons.error} err</span>}
+                  <span className="text-zinc-600">/ {crons.total}</span>
+                </div>
               </div>
+              {/* Tags row */}
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {crons.jobs.map((job) => (
                   <span
@@ -612,7 +603,9 @@ function BotCard({ agent, onSelectTarget }: { agent: DashboardAgent; onSelectTar
                     className={`rounded-full px-2 py-0.5 text-xs ${
                       job.lastStatus === "ok"
                         ? "border border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
-                        : "border border-rose-500/20 bg-rose-500/10 text-rose-300"
+                        : job.lastStatus === "idle"
+                          ? "border border-zinc-700/40 bg-zinc-800/40 text-zinc-500"
+                          : "border border-rose-500/20 bg-rose-500/10 text-rose-300"
                     }`}
                     title={`${job.name} · ${job.schedule}`}
                   >
@@ -620,6 +613,35 @@ function BotCard({ agent, onSelectTarget }: { agent: DashboardAgent; onSelectTar
                   </span>
                 ))}
               </div>
+              {/* Expand button */}
+              {hasDetailedCrons && (
+                <button
+                  type="button"
+                  onClick={() => setCronExpanded(!cronExpanded)}
+                  className="mt-2 flex w-full items-center justify-center gap-1 rounded-lg py-1 text-xs text-zinc-500 transition hover:bg-zinc-800/50 hover:text-zinc-300"
+                >
+                  {cronExpanded ? "收起" : "展开详情"}
+                  <ChevronDown className={cn("h-3 w-3 transition-transform", cronExpanded && "rotate-180")} />
+                </button>
+              )}
+              {/* Expanded detail table */}
+              {cronExpanded && hasDetailedCrons && (
+                <div className="mt-2 space-y-1.5 border-t border-zinc-800/40 pt-2">
+                  {cronJobs.map((job) => (
+                    <div key={job.id} className="flex items-center gap-2 text-xs">
+                      <StatusPill ok={job.lastStatus === "ok"}>{job.lastStatus || "—"}</StatusPill>
+                      <span className="flex-1 truncate text-zinc-300" title={job.name}>{job.name}</span>
+                      <span className="shrink-0 text-zinc-600">{job.schedule || "—"}</span>
+                      <span className="shrink-0 tabular-nums text-zinc-500" title="上次运行">{formatDateTime(job.lastRun)}</span>
+                      {(job.consecutiveErrors ?? 0) > 0 && (
+                        <span className="shrink-0 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[10px] text-rose-300">
+                          ×{job.consecutiveErrors}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {/* Tasks mini */}
@@ -637,6 +659,51 @@ function BotCard({ agent, onSelectTarget }: { agent: DashboardAgent; onSelectTar
             </div>
           )}
         </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ═══════════════════ Orphan Cron Section ═══════════════════ */
+
+function OrphanCronSection({ jobs }: { jobs: CronJob[] }) {
+  const [expanded, setExpanded] = useState(false)
+  const errorCount = jobs.filter((j) => j.lastStatus === "error").length
+
+  return (
+    <Card className="border-zinc-800/80 bg-[#18181b] shadow-none">
+      <CardContent className="px-5 py-4">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="flex w-full items-center justify-between"
+        >
+          <div className="flex items-center gap-2">
+            <Timer className="h-4 w-4 text-zinc-500" />
+            <span className="text-sm font-medium text-zinc-300">其他 Cron Jobs</span>
+            <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-500">{jobs.length}</span>
+            {errorCount > 0 && (
+              <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-xs text-rose-300">{errorCount} err</span>
+            )}
+          </div>
+          <ChevronDown className={cn("h-4 w-4 text-zinc-500 transition-transform", expanded && "rotate-180")} />
+        </button>
+        {expanded && (
+          <div className="mt-3 space-y-1.5 border-t border-zinc-800/40 pt-3">
+            {jobs.map((job) => (
+              <div key={job.id} className="flex items-center gap-2 text-xs">
+                <StatusPill ok={job.lastStatus === "ok"}>{job.lastStatus || "—"}</StatusPill>
+                <span className="min-w-0 flex-1 truncate text-zinc-300" title={job.name}>{job.name}</span>
+                <span className="shrink-0 text-zinc-600">{job.agent || "—"}</span>
+                <span className="shrink-0 text-zinc-600">{job.schedule || "—"}</span>
+                <span className="shrink-0 tabular-nums text-zinc-500">{formatDateTime(job.lastRun)}</span>
+                {(job.consecutiveErrors ?? 0) > 0 && (
+                  <span className="shrink-0 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[10px] text-rose-300">×{job.consecutiveErrors}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -662,10 +729,10 @@ function classifyServers(servers: ServerSnapshot[]) {
 }
 
 const SERVER_PROXY_TARGET: CommandTarget = {
-  id: "server-proxy-quokka",
-  name: "quokka",
-  emoji: "🖥️",
-  user_id: "3piznyqwiprmurnuke63rkwwmo",
+  id: "server-proxy-ottor",
+  name: "Ottor",
+  emoji: "🔬",
+  user_id: "ctgkdui9n38idyepmdzaoccgdw",
   kind: "server",
 }
 

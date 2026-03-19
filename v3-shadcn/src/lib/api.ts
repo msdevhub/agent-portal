@@ -412,6 +412,9 @@ export interface OpsMessagesResult {
 export const sendOpsMessage = (targetUserId: string, message: string) =>
   api<OpsSendResult>('/ops/send', 'POST', { target_user_id: targetUserId, message })
 
+export const getOpsChannel = (targetUserId: string) =>
+  api<{ channel_id: string }>(`/ops/channel?target_user_id=${encodeURIComponent(targetUserId)}`)
+
 export const getOpsMessages = (channelId: string, since?: number) => {
   let path = `/ops/messages?channel_id=${encodeURIComponent(channelId)}`
   if (since) path += `&since=${since}`

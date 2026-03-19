@@ -65,7 +65,7 @@ v3-shadcn/
 
 ## 5. API层 (`lib/api.ts`)
 
-连接 `/api` → Vite代理 → `http://localhost:18820`
+连接 `/api` → Vite代理 → `http://localhost:3002`
 
 | 方法 | 路径 | 用途 |
 |------|------|------|
