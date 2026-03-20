@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 
 const app = express();
-const PORT = 3019;  // must match container EXPOSE port (Docker maps host:3002→container:3019)
+const PORT = process.env.PORT || 3002;
 const MIME_TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 
 const SUPABASE_URL = 'https://db.dora.restry.cn';

@@ -1,5 +1,27 @@
 import { useMemo, useState } from "react"
-import { Activity, AlertTriangle, Bot, ChevronDown, ExternalLink, FlaskConical, MessageSquare, Monitor, Plus, RefreshCw, Server, Timer } from "lucide-react"
+import {
+  AlertTriangle,
+  Box,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Cpu,
+  ExternalLink,
+  FlaskConical,
+  Globe,
+  HardDrive,
+  History,
+  MapPin,
+  MessageSquare,
+  Monitor,
+  Plus,
+  RefreshCw,
+  Server,
+  Shield,
+  Timer,
+  Workflow,
+  X,
+} from "lucide-react"
 
 import { UserMenu } from "@/components/auth/UserMenu"
 import { CommandBar } from "@/components/portal/CommandBar"
@@ -8,26 +30,23 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import {
-  CompactStatsBar,
-  MobileDisclosure,
   StatCard,
   StatusBadge,
   formatDateTime as sharedFormatDateTime,
   getProjectProgress,
-  truncateInlineText,
 } from "@/components/portal/shared"
 import type {
   CronJob,
   DashboardAgent,
   DashboardData,
   Project,
-  ServerAlert,
-  ServerService,
   ServerSnapshot,
   Stats,
 } from "@/lib/api"
 import { STAGES } from "@/lib/constants"
 import { cn } from "@/lib/utils"
+
+/* ═══════════════════ Types ═══════════════════ */
 
 interface RecentNotePreview {
   id: string
@@ -45,7 +64,6 @@ interface DashboardPageProps {
   historyServerPoints?: string[]
   selectedAsOf: string | null
   onSelectAsOf: (value: string | null) => void
-  // Projects tab data
   stats: Stats
   projects: Project[]
   recentNotes: RecentNotePreview[]
@@ -56,51 +74,42 @@ interface DashboardPageProps {
 
 type TabId = "bots" | "servers" | "projects"
 
+/* ═══════════════════ Main Page ═══════════════════ */
+
 export function DashboardPage({
   dashboard, loading, refreshing, historyPoints, historyBotPoints, historyServerPoints, selectedAsOf, onSelectAsOf,
   stats, projects, recentNotes, projectsLoading,
   onCreateProject, onOpenProject,
 }: DashboardPageProps) {
   const [activeTab, setActiveTab] = useState<TabId>("bots")
-  const [commandTarget, setCommandTarget] = useState<CommandTarget | null>(null)
+  const [selectedTargets, setSelectedTargets] = useState<CommandTarget[]>([])
+
   const summary = dashboard.summary ?? {}
   const lastUpdated = dashboard.updated_at ?? summary.timestamp ?? null
   const asOf = dashboard.as_of ?? lastUpdated ?? null
-  const isHistoryMode = selectedAsOf !== null
-  const historyIndex = selectedAsOf ? Math.max(historyPoints.findIndex((point) => point === selectedAsOf), 0) : 0
   const servers = dashboard.servers ?? []
   const agents = dashboard.agents ?? []
   const serverOnlineCount = servers.filter((s) => s.ssh_reachable).length
-  const serverSnapshotTimes = useMemo(() => collectServerSnapshotTimes(servers), [servers])
-  const botSnapshotTime = summary.timestamp ?? findNearestHistoryPoint(historyBotPoints, selectedAsOf) ?? asOf
-  const serverSnapshotTime = serverSnapshotTimes[0] ?? findNearestHistoryPoint(historyServerPoints, selectedAsOf)
-  const crossFleetMismatch = !areSameSnapshotTime(botSnapshotTime, serverSnapshotTime)
-  const fleetsOutOfSync = isHistoryMode && (
-    serverSnapshotTimes.length > 1 ||
-    crossFleetMismatch
-  )
-  const snapshotNotice = isHistoryMode
-    ? [
-        crossFleetMismatch
-          ? "Bot Fleet 与 Server Fleet 没有共用同一快照时间"
-          : null,
-        serverSnapshotTimes.length > 1
-          ? "Server Fleet 内部包含多个 snapshot_time"
-          : null,
-      ].filter(Boolean).join("；")
-    : ""
+
+  const handleToggleTarget = (target: CommandTarget) => {
+    setSelectedTargets(prev => {
+      const exists = prev.some(t => t.id === target.id)
+      if (exists) return prev.filter(t => t.id !== target.id)
+      return [...prev, target]
+    })
+  }
 
   return (
-    <main className="flex min-h-screen w-full flex-col gap-5 px-4 py-5 pb-24 sm:gap-8 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+    <main className="flex min-h-screen w-full flex-col px-4 py-5 pb-32 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
       {/* Header */}
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <header className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-4xl">Research Fleet Portal</h1>
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-500 sm:text-sm">
-            <span>最近更新：{formatDateTime(lastUpdated)}</span>
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">Research Fleet Portal</h1>
+          <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
+            <span>最近更新：{fmtDateTime(lastUpdated)}</span>
             {refreshing && (
               <span className="inline-flex items-center gap-1 text-emerald-300">
-                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                <RefreshCw className="h-3 w-3 animate-spin" />
                 刷新中
               </span>
             )}
@@ -109,48 +118,42 @@ export function DashboardPage({
         <UserMenu />
       </header>
 
-      <TimeMachineBar
-        points={historyPoints}
-        botPoints={historyBotPoints}
-        serverPoints={historyServerPoints}
-        value={selectedAsOf}
-        currentIndex={historyIndex}
-        latestLabel={asOf}
-        botSnapshotTime={botSnapshotTime}
-        serverSnapshotTime={serverSnapshotTime}
-        serverSnapshotTimes={serverSnapshotTimes}
-        snapshotNotice={snapshotNotice}
-        fleetsOutOfSync={fleetsOutOfSync}
-        onChange={onSelectAsOf}
-      />
+      {/* Tab Bar + Inline Time Machine */}
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        <TabButton active={activeTab === "bots"} onClick={() => setActiveTab("bots")} icon={Workflow} label="Bot Fleet" count={agents.length} />
+        <TabButton active={activeTab === "servers"} onClick={() => setActiveTab("servers")} icon={Server} label="Server Fleet" count={`${serverOnlineCount}/${servers.length}`} />
+        <TabButton active={activeTab === "projects"} onClick={() => setActiveTab("projects")} icon={FlaskConical} label="Projects" count={projects.length} />
 
-      <div
-        className={cn(
-          "space-y-6",
-          isHistoryMode && "rounded-[30px] border border-stone-200/10 bg-[linear-gradient(180deg,rgba(241,238,232,0.07),rgba(241,238,232,0.03))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] sm:p-5 lg:p-6",
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Inline Time Machine */}
+        <InlineTimeMachine
+          points={historyPoints}
+          value={selectedAsOf}
+          latestLabel={asOf}
+          onChange={onSelectAsOf}
+        />
+      </div>
+
+      {/* Tab Content */}
+      <div className="min-h-[400px]">
+        {activeTab === "bots" && (
+          <BotFleetTab
+            dashboard={dashboard}
+            loading={loading}
+            selectedTargets={selectedTargets}
+            onToggleTarget={handleToggleTarget}
+          />
         )}
-      >
-        {isHistoryMode && (
-          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.035] px-3 py-2 text-xs text-zinc-300">
-            <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 font-medium text-zinc-100">
-              历史查看模式
-            </span>
-            <span className="text-zinc-400">
-              主内容区按 Bot Fleet / Server Fleet 各自的实际快照时间渲染。
-            </span>
-          </div>
+        {activeTab === "servers" && (
+          <ServerFleetTab
+            servers={servers}
+            loading={loading}
+            selectedTargets={selectedTargets}
+            onToggleTarget={handleToggleTarget}
+          />
         )}
-
-        {/* Tab Bar */}
-        <div className="flex flex-wrap gap-2">
-          <TabButton active={activeTab === "bots"} onClick={() => setActiveTab("bots")} icon={Bot} label="🤖 Bot Fleet" count={agents.length} />
-          <TabButton active={activeTab === "servers"} onClick={() => setActiveTab("servers")} icon={Monitor} label="🖥️ Server Fleet" count={`${serverOnlineCount}/${servers.length}`} />
-          <TabButton active={activeTab === "projects"} onClick={() => setActiveTab("projects")} icon={FlaskConical} label="📋 项目列表" count={projects.length} />
-        </div>
-
-        {/* Tab Content */}
-        {activeTab === "bots" && <BotFleetTab dashboard={dashboard} loading={loading} onSelectTarget={setCommandTarget} />}
-        {activeTab === "servers" && <ServerFleetTab servers={servers} loading={loading} onSelectTarget={setCommandTarget} />}
         {activeTab === "projects" && (
           <ProjectsTab
             stats={stats}
@@ -164,227 +167,72 @@ export function DashboardPage({
       </div>
 
       {/* Command Bar */}
-      <CommandBar target={commandTarget} onClearTarget={() => setCommandTarget(null)} />
+      <CommandBar
+        targets={selectedTargets}
+        onClearTarget={(id) => {
+          if (id) setSelectedTargets(prev => prev.filter(t => t.id !== id))
+          else setSelectedTargets([])
+        }}
+      />
     </main>
+  )
+}
+
+/* ═══════════════════ Inline Time Machine ═══════════════════ */
+
+function InlineTimeMachine({ points, value, latestLabel, onChange }: {
+  points: string[]
+  value: string | null
+  latestLabel: string | null
+  onChange: (v: string | null) => void
+}) {
+  const canTravel = points.length > 1
+  const currentIndex = value ? Math.max(points.findIndex((p) => p === value), 0) : 0
+  const displayTime = value ? fmtDateTime(value) : fmtDateTime(latestLabel)
+
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-zinc-800/60 bg-[#111113] px-3 py-1.5">
+      <History className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+      <span className="font-mono text-xs text-zinc-300 whitespace-nowrap">{displayTime}</span>
+      <input
+        type="range"
+        min={0}
+        max={Math.max(points.length - 1, 0)}
+        step={1}
+        value={Math.min(currentIndex, Math.max(points.length - 1, 0))}
+        disabled={!canTravel}
+        onChange={(e) => {
+          const i = Number(e.target.value)
+          onChange(i === 0 ? null : points[i] ?? null)
+        }}
+        className="tm-slider w-24 sm:w-32 disabled:opacity-40"
+      />
+      {value && (
+        <button onClick={() => onChange(null)} className="text-[10px] text-emerald-400 hover:text-emerald-300 whitespace-nowrap">
+          最新
+        </button>
+      )}
+    </div>
   )
 }
 
 /* ═══════════════════ Tab Button ═══════════════════ */
 
-function TimeMachineBar({
-  points,
-  botPoints,
-  serverPoints,
-  value,
-  currentIndex,
-  latestLabel,
-  botSnapshotTime,
-  serverSnapshotTime,
-  serverSnapshotTimes,
-  snapshotNotice,
-  fleetsOutOfSync,
-  onChange,
-}: {
-  points: string[]
-  botPoints?: string[]
-  serverPoints?: string[]
-  value: string | null
-  currentIndex: number
-  latestLabel: string | null
-  botSnapshotTime: string | null
-  serverSnapshotTime: string | null
-  serverSnapshotTimes: string[]
-  snapshotNotice: string
-  fleetsOutOfSync: boolean
-  onChange: (value: string | null) => void
-}) {
-  const canTravel = points.length > 1
-  const bots = botPoints ?? []
-  const servers = serverPoints ?? []
-  const isHistoryMode = value !== null
-  const hasMixedServerSnapshots = serverSnapshotTimes.length > 1
-  const oldestServerSnapshot = hasMixedServerSnapshots ? serverSnapshotTimes[serverSnapshotTimes.length - 1] : null
-
-  // Build tick marks for the slider
-  const tickPositions = useMemo(() => {
-    if (points.length < 2) return []
-    const max = points.length - 1
-    // Show up to 8 evenly-spaced ticks
-    const count = Math.min(8, points.length)
-    const step = max / (count - 1)
-    return Array.from({ length: count }, (_, i) => Math.round(i * step))
-  }, [points.length])
-
-  return (
-    <Card className="border-zinc-800/80 bg-[#111113] shadow-none">
-      <CardContent className="space-y-4 px-4 py-5 sm:px-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <div>
-            <div className="text-sm font-semibold text-zinc-100">🕰️ 历史查看模式</div>
-            <div className="mt-1 text-xs text-zinc-500">
-              {isHistoryMode
-                ? `请求时间：${formatDateTime(value)} · Bot Fleet / Server Fleet 会分别使用各自最近可用的 snapshot/as-of 时间`
-                : `当前展示最新视图 · 最新可用时间 ${formatDateTime(latestLabel)}`}
-            </div>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            {/* Source counts */}
-            <span className="rounded-md bg-zinc-800/60 px-2 py-1 text-[11px] text-zinc-400">
-              🤖 {bots.length}
-            </span>
-            <span className="rounded-md bg-zinc-800/60 px-2 py-1 text-[11px] text-zinc-400">
-              🖥️ {servers.length}
-            </span>
-            {value && (
-              <button
-                type="button"
-                onClick={() => onChange(null)}
-                className="rounded-lg border border-zinc-700 bg-[#18181b] px-3 py-1.5 text-xs text-zinc-300 transition hover:border-zinc-600 hover:text-zinc-100"
-              >
-                回到最新
-              </button>
-            )}
-            <span className="rounded-full bg-zinc-800 px-2 py-1 text-[11px] text-zinc-400">
-              {canTravel ? `${currentIndex + 1}/${points.length}` : "暂无历史"}
-            </span>
-          </div>
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-2">
-          <HistorySnapshotCard
-            icon={Bot}
-            title="Bot Fleet as-of"
-            value={formatDateTime(botSnapshotTime)}
-            detail={isHistoryMode ? "按 bot 侧实际 as-of 渲染" : "当前 bot 最新快照"}
-          />
-          <HistorySnapshotCard
-            icon={Monitor}
-            title="Server Fleet snapshot_time"
-            value={hasMixedServerSnapshots ? "多批次快照" : formatDateTime(serverSnapshotTime)}
-            detail={
-              hasMixedServerSnapshots
-                ? `最早 ${formatDateTime(oldestServerSnapshot)} · 最新 ${formatDateTime(serverSnapshotTimes[0])}`
-                : isHistoryMode
-                  ? "按 server 侧实际 snapshot_time 渲染"
-                  : "当前 server 最新快照"
-            }
-            tone={hasMixedServerSnapshots ? "warn" : "default"}
-          />
-        </div>
-
-        {fleetsOutOfSync && snapshotNotice && (
-          <div className="flex items-start gap-2 rounded-2xl border border-amber-200/15 bg-amber-50/6 px-3 py-2.5 text-xs text-amber-100/85">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-200/80" />
-            <span>时间不同步：{snapshotNotice}。界面已按各自最近可用快照展示，而不是假装使用同一时间点。</span>
-          </div>
-        )}
-
-        {/* Slider track with bigger thumb */}
-        <div className="space-y-1">
-          <div className="relative">
-            <input
-              type="range"
-              min={0}
-              max={Math.max(points.length - 1, 0)}
-              step={1}
-              value={Math.min(currentIndex, Math.max(points.length - 1, 0))}
-              disabled={!canTravel}
-              onChange={(e) => {
-                const nextIndex = Number(e.target.value)
-                const point = points[nextIndex]
-                onChange(nextIndex === 0 ? null : point ?? null)
-              }}
-              className="tm-slider w-full disabled:opacity-40"
-            />
-            {/* Tick marks */}
-            {canTravel && (
-              <div className="pointer-events-none absolute inset-x-[6px] top-0 flex h-8 items-end">
-                {tickPositions.map((pos) => {
-                  const pct = (pos / Math.max(points.length - 1, 1)) * 100
-                  return (
-                    <div
-                      key={pos}
-                      className="absolute bottom-0 h-2 w-px bg-zinc-600"
-                      style={{ left: `${pct}%` }}
-                    />
-                  )
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Tick labels */}
-          <div className="flex items-center justify-between text-[11px] text-zinc-500">
-            <span>{points[points.length - 1] ? formatDateTime(points[points.length - 1]) : "—"}</span>
-            {points.length > 4 && (
-              <span>{points[Math.floor(points.length / 2)] ? formatDateTime(points[Math.floor(points.length / 2)]) : ""}</span>
-            )}
-            <span>{points[0] ? formatDateTime(points[0]) : "—"}</span>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-function HistorySnapshotCard({ icon: Icon, title, value, detail, tone = "default" }: {
-  icon: React.ElementType
-  title: string
-  value: string
-  detail: string
-  tone?: "default" | "warn"
-}) {
-  return (
-    <div className={cn(
-      "rounded-2xl border px-3.5 py-3",
-      tone === "warn"
-        ? "border-amber-200/12 bg-amber-50/5"
-        : "border-zinc-800/80 bg-[#18181b]/70",
-    )}>
-      <div className="flex items-start gap-3">
-        <div className={cn(
-          "rounded-xl border p-2",
-          tone === "warn"
-            ? "border-amber-200/12 bg-amber-100/6 text-amber-100/85"
-            : "border-zinc-800 bg-[#111113] text-zinc-400",
-        )}>
-          <Icon className="h-4 w-4" />
-        </div>
-        <div className="min-w-0">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">{title}</div>
-          <div className={cn(
-            "mt-1 text-sm font-semibold",
-            tone === "warn" ? "text-amber-50/90" : "text-zinc-100",
-          )}>
-            {value}
-          </div>
-          <div className="mt-1 text-xs leading-5 text-zinc-500">{detail}</div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function TabButton({ active, onClick, icon: Icon, label, count }: {
-  active: boolean
-  onClick: () => void
-  icon: React.ElementType
-  label: string
-  count: number | string
+  active: boolean; onClick: () => void; icon: React.ElementType; label: string; count: number | string
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-2.5 rounded-xl border px-5 py-3 text-sm font-medium transition ${
-        active
-          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-          : "border-zinc-800 bg-[#111113] text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
-      }`}
+      className={cn(
+        "inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition",
+        active ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200"
+      )}
     >
-      <Icon className="h-4 w-4" />
+      <Icon className={cn("h-4 w-4", active ? "text-emerald-400" : "text-zinc-500")} />
       {label}
-      <span className={`rounded-full px-2 py-0.5 text-xs ${active ? "bg-emerald-500/20 text-emerald-200" : "bg-zinc-800 text-zinc-500"}`}>
+      <span className={cn("ml-0.5 rounded-md px-1.5 py-0.5 text-xs", active ? "bg-zinc-700 text-zinc-300" : "bg-zinc-800/50 text-zinc-500")}>
         {count}
       </span>
     </button>
@@ -393,1067 +241,427 @@ function TabButton({ active, onClick, icon: Icon, label, count }: {
 
 /* ═══════════════════ Bot Fleet Tab ═══════════════════ */
 
-function BotFleetTab({ dashboard, loading, onSelectTarget }: { dashboard: DashboardData; loading: boolean; onSelectTarget: (t: CommandTarget) => void }) {
-  const summary = dashboard.summary ?? {}
+function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget }: {
+  dashboard: DashboardData; loading: boolean; selectedTargets: CommandTarget[]; onToggleTarget: (t: CommandTarget) => void
+}) {
   const agents = dashboard.agents ?? []
-  const allCronJobs = dashboard.cron_jobs ?? []
-  const agentIds = new Set(agents.map((a) => a.id))
-
-  // Group cron jobs by agent
-  const cronsByAgent = useMemo(() => {
-    const map: Record<string, typeof allCronJobs> = {}
-    for (const job of allCronJobs) {
-      const key = job.agent ?? "_orphan"
-      ;(map[key] ??= []).push(job)
-    }
-    return map
-  }, [allCronJobs])
-
-  // Orphan crons: agent not in the bot list
-  const orphanCrons = useMemo(() =>
-    allCronJobs.filter((j) => !agentIds.has(j.agent ?? "")),
-    [allCronJobs, agentIds],
-  )
-
-  const overviewCards = useMemo(() => [
-    {
-      title: "Agent 总数",
-      icon: Bot,
-      value: `${agents.length}`,
-      accent: "text-violet-300",
-    },
-    {
-      title: "生产站点",
-      icon: Activity,
-      value: `${summary.production?.up ?? 0}/${summary.production?.total ?? 0}`,
-      accent: "text-emerald-300",
-    },
-    {
-      title: "容器",
-      icon: Server,
-      value: `${summary.containers?.up ?? 0}/${summary.containers?.total ?? 0}`,
-      accent: "text-cyan-300",
-    },
-    {
-      title: "Cron Jobs",
-      icon: Timer,
-      value: `${summary.crons?.ok ?? 0} ok / ${summary.crons?.error ?? 0} err`,
-      accent: "text-amber-300",
-    },
-  ], [agents.length, summary])
-
   return (
-    <div className="space-y-6">
-      {/* Mini overview */}
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {overviewCards.map((card) => {
-          const Icon = card.icon
-          return (
-            <Card key={card.title} className="border-zinc-800/80 bg-[#18181b] shadow-none">
-              <CardContent className="flex items-center justify-between gap-3 px-5 py-4">
-                <div>
-                  <p className="text-xs text-zinc-500">{card.title}</p>
-                  <p className={`mt-1 text-xl font-semibold ${card.accent}`}>{card.value}</p>
-                </div>
-                <div className="rounded-2xl border border-zinc-800 bg-[#111113] p-2.5 text-zinc-400">
-                  <Icon className="h-4 w-4" />
-                </div>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </section>
-
-      {/* Bot cards grid */}
-      <section>
-        {loading && agents.length === 0 ? (
-          <EmptyRow text="加载中..." />
-        ) : agents.length === 0 ? (
-          <EmptyRow text="暂无 Agent 数据" />
-        ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {agents.map((agent) => (
-              <BotCard key={agent.id} agent={agent} cronJobs={cronsByAgent[agent.id] ?? []} onSelectTarget={onSelectTarget} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Orphan Cron Jobs (agents not in bot list) */}
-      {orphanCrons.length > 0 && (
-        <OrphanCronSection jobs={orphanCrons} />
+    <div className="space-y-3">
+      {loading && agents.length === 0 ? <EmptyRow text="加载中..." /> : agents.length === 0 ? <EmptyRow text="暂无 Agent 数据" /> : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {agents.map((agent) => (
+            <BotCard
+              key={agent.id}
+              agent={agent}
+              selected={selectedTargets.some(t => t.id === agent.id)}
+              onToggle={() => onToggleTarget({ id: agent.id, name: agent.name ?? agent.id, emoji: "🤖", user_id: agent.mm_user_id!, kind: "bot" })}
+            />
+          ))}
+        </div>
       )}
     </div>
   )
 }
 
-/* ═══════════════════ Bot Card ═══════════════════ */
-
-function BotCard({ agent, cronJobs, onSelectTarget }: { agent: DashboardAgent; cronJobs: CronJob[]; onSelectTarget: (t: CommandTarget) => void }) {
-  const [cronExpanded, setCronExpanded] = useState(false)
+function BotCard({ agent, selected, onToggle }: { agent: DashboardAgent; selected: boolean; onToggle: () => void }) {
+  const [cronOpen, setCronOpen] = useState(false)
   const prod = agent.production
   const dev = agent.dev
   const container = agent.container
   const crons = agent.crons
-  const tasks = agent.tasks
   const canMessage = !!agent.mm_user_id
-  const hasDetailedCrons = cronJobs.length > 0
-  const hasErrors = cronJobs.some((j) => j.lastStatus === "error")
 
   return (
-    <Card className="border-zinc-800/80 bg-[#111113] shadow-none">
-      <CardContent className="space-y-3.5 p-5">
-        {/* Header: emoji + name + role */}
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-zinc-800 bg-[#18181b] text-xl">
-            {agent.emoji || "🤖"}
+    <div className={cn(
+      "group relative flex flex-col gap-2.5 rounded-xl border bg-[#111113] p-3.5 transition-all hover:border-zinc-700",
+      selected ? "border-emerald-500/50 bg-emerald-500/5 ring-1 ring-emerald-500/20" : "border-zinc-800/80"
+    )}>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <div className={cn(
+            "flex h-8 w-8 items-center justify-center rounded-lg border",
+            selected ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-zinc-800 bg-[#18181b] text-zinc-400"
+          )}>
+            <Workflow className="h-4 w-4" />
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-base font-semibold text-zinc-50">{agent.name}</span>
-              <Badge variant="outline" className="border-zinc-700 text-xs text-zinc-400">
-                {agent.role === "coordination" ? "协调中心" : agent.project || "—"}
-              </Badge>
-            </div>
-            <div className="mt-0.5 text-xs text-zinc-500">@{agent.id}</div>
-          </div>
-          <div className="flex items-center gap-1.5">
-            {canMessage && (
-              <button
-                type="button"
-                onClick={() =>
-                  onSelectTarget({
-                    id: agent.id,
-                    name: agent.name ?? agent.id,
-                    emoji: agent.emoji ?? "🤖",
-                    user_id: agent.mm_user_id!,
-                    kind: "bot",
-                  })
-                }
-                className="rounded-lg border border-zinc-800 bg-[#18181b] p-2 text-zinc-500 transition hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-300"
-                title={`给 ${agent.name ?? agent.id} 发指令`}
-              >
-                <MessageSquare className="h-4 w-4" />
-              </button>
-            )}
-            {agent.github && (
-              <a href={agent.github} target="_blank" rel="noreferrer" className="text-zinc-500 transition hover:text-zinc-300" title="GitHub">
-                <ExternalLink className="h-4 w-4" />
-              </a>
-            )}
-          </div>
-        </div>
-
-        {/* Deployment status */}
-        <div className="space-y-2 rounded-xl border border-zinc-800/60 bg-[#18181b]/50 px-3.5 py-3">
-          <div className="text-xs font-medium text-zinc-500">部署状态</div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
-            {prod ? (
-              <span className="flex items-center gap-1.5">
-                <DotIndicator ok={prod.status === 200} />
-                <a href={prod.url} target="_blank" rel="noreferrer" className="text-zinc-300 hover:text-zinc-100">生产</a>
-                <span className="text-xs text-zinc-500">{prod.status}</span>
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 text-zinc-600">
-                <DotIndicator ok={false} dim />
-                <span>无生产</span>
-              </span>
-            )}
-            {dev ? (
-              <span className="flex items-center gap-1.5">
-                <DotIndicator ok={dev.status === 200} />
-                <a href={dev.url} target="_blank" rel="noreferrer" className="text-zinc-300 hover:text-zinc-100">开发</a>
-                <span className="text-xs text-zinc-500">{dev.status}</span>
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 text-zinc-600">
-                <DotIndicator ok={false} dim />
-                <span>无 Dev</span>
-              </span>
-            )}
-            {container ? (
-              <span className="flex items-center gap-1.5">
-                <DotIndicator ok={container.running} />
-                <span className="text-zinc-300">容器</span>
-                <span className="text-xs text-zinc-500">{container.running ? "running" : "stopped"}</span>
-              </span>
-            ) : null}
-          </div>
-        </div>
-
-        {/* Cron + Tasks row */}
-        <div className="flex gap-3">
-          {/* Cron section */}
-          {crons && crons.total > 0 && (
-            <div className="flex-1 rounded-xl border border-zinc-800/60 bg-[#18181b]/50 px-3.5 py-2.5">
-              <div className="flex items-center justify-between">
-                <div className="text-xs font-medium text-zinc-500">Cron</div>
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="text-emerald-300">{crons.ok} ok</span>
-                  {crons.error > 0 && <span className="text-rose-300">{crons.error} err</span>}
-                  <span className="text-zinc-600">/ {crons.total}</span>
-                </div>
-              </div>
-              {/* Tags row */}
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {crons.jobs.map((job) => (
-                  <span
-                    key={job.name}
-                    className={`rounded-full px-2 py-0.5 text-xs ${
-                      job.lastStatus === "ok"
-                        ? "border border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
-                        : job.lastStatus === "idle"
-                          ? "border border-zinc-700/40 bg-zinc-800/40 text-zinc-500"
-                          : "border border-rose-500/20 bg-rose-500/10 text-rose-300"
-                    }`}
-                    title={`${job.name} · ${job.schedule}`}
-                  >
-                    {job.name.replace(/-(project-sync|healthcheck)/, "").replace(agent.id.split("-").pop() || "", "").replace(/^-/, "") || job.name}
-                  </span>
-                ))}
-              </div>
-              {/* Expand button */}
-              {hasDetailedCrons && (
-                <button
-                  type="button"
-                  onClick={() => setCronExpanded(!cronExpanded)}
-                  className="mt-2 flex w-full items-center justify-center gap-1 rounded-lg py-1 text-xs text-zinc-500 transition hover:bg-zinc-800/50 hover:text-zinc-300"
-                >
-                  {cronExpanded ? "收起" : "展开详情"}
-                  <ChevronDown className={cn("h-3 w-3 transition-transform", cronExpanded && "rotate-180")} />
-                </button>
-              )}
-              {/* Expanded detail table */}
-              {cronExpanded && hasDetailedCrons && (
-                <div className="mt-2 space-y-1.5 border-t border-zinc-800/40 pt-2">
-                  {cronJobs.map((job) => (
-                    <div key={job.id} className="flex items-center gap-2 text-xs">
-                      <StatusPill ok={job.lastStatus === "ok"}>{job.lastStatus || "—"}</StatusPill>
-                      <span className="flex-1 truncate text-zinc-300" title={job.name}>{job.name}</span>
-                      <span className="shrink-0 text-zinc-600">{job.schedule || "—"}</span>
-                      <span className="shrink-0 tabular-nums text-zinc-500" title="上次运行">{formatDateTime(job.lastRun)}</span>
-                      {(job.consecutiveErrors ?? 0) > 0 && (
-                        <span className="shrink-0 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[10px] text-rose-300">
-                          ×{job.consecutiveErrors}
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-semibold text-zinc-100">{agent.name}</span>
+              {agent.role === "coordination" && (
+                <Badge variant="outline" className="border-zinc-700 bg-zinc-800/50 px-1 py-0 text-[10px] text-zinc-400">协调</Badge>
               )}
             </div>
-          )}
-          {/* Tasks mini */}
-          {tasks && (
-            <div className="shrink-0 rounded-xl border border-zinc-800/60 bg-[#18181b]/50 px-3.5 py-2.5">
-              <div className="text-xs font-medium text-zinc-500">任务</div>
-              <div className="mt-1 text-sm">
-                {tasks.pending > 0 ? (
-                  <span className="text-amber-300">{tasks.pending} 待办</span>
-                ) : (
-                  <span className="text-emerald-300">✓ 全部完成</span>
-                )}
-              </div>
-              <div className="mt-0.5 text-xs text-zinc-600">{tasks.done}/{tasks.total} done</div>
+            <div className="text-[11px] text-zinc-500">@{agent.id}</div>
+          </div>
+        </div>
+        {canMessage && (
+          <button onClick={(e) => { e.stopPropagation(); onToggle() }} className={cn(
+            "rounded-lg p-1.5 transition",
+            selected ? "bg-emerald-500 text-white" : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+          )}>
+            {selected ? <X className="h-3.5 w-3.5" /> : <MessageSquare className="h-3.5 w-3.5" />}
+          </button>
+        )}
+      </div>
+
+      {/* Status Grid */}
+      <div className="grid grid-cols-2 gap-1.5 text-xs">
+        {/* Production */}
+        <EnvCell icon={Globe} label="生产" status={prod} />
+        {/* Dev */}
+        <EnvCell icon={Monitor} label="开发" status={dev} />
+        {/* Container */}
+        {container && (
+          <div className="col-span-2 flex items-center gap-1.5 rounded-md bg-[#18181b] px-2 py-1.5">
+            <Box className="h-3 w-3 text-zinc-500" />
+            <span className="text-[10px] text-zinc-500">容器</span>
+            <span className={cn("ml-auto text-[10px] font-medium", container.status === "running" ? "text-emerald-400" : "text-rose-400")}>
+              {container.status}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Cron Jobs - Clickable */}
+      {crons && crons.total > 0 && (
+        <div className="rounded-md border border-zinc-800/50 bg-[#18181b]">
+          <button
+            onClick={() => setCronOpen(!cronOpen)}
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-xs transition hover:bg-zinc-800/50"
+          >
+            <Timer className="h-3 w-3 text-zinc-500" />
+            <span className="text-zinc-400">Cron</span>
+            <span className={cn("ml-auto font-medium", crons.error > 0 ? "text-rose-400" : "text-emerald-400")}>
+              {crons.ok} ok / {crons.error} err
+            </span>
+            <ChevronDown className={cn("h-3 w-3 text-zinc-500 transition-transform", cronOpen && "rotate-180")} />
+          </button>
+          {cronOpen && (
+            <div className="border-t border-zinc-800/50 px-2 py-1.5 space-y-1">
+              {crons.jobs?.map((job: CronJob) => (
+                <div key={job.name} className="flex items-center justify-between text-[10px]">
+                  <span className="text-zinc-400 truncate mr-2">{job.name}</span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-zinc-600">{job.schedule}</span>
+                    <span className={cn("rounded px-1 py-0.5 font-medium",
+                      job.last_status === "ok" ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"
+                    )}>
+                      {job.last_status}
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
-      </CardContent>
-    </Card>
+      )}
+    </div>
   )
 }
 
-/* ═══════════════════ Orphan Cron Section ═══════════════════ */
-
-function OrphanCronSection({ jobs }: { jobs: CronJob[] }) {
-  const [expanded, setExpanded] = useState(false)
-  const errorCount = jobs.filter((j) => j.lastStatus === "error").length
-
+function EnvCell({ icon: Icon, label, status }: {
+  icon: React.ElementType; label: string; status: { url?: string; status?: number } | null | undefined
+}) {
   return (
-    <Card className="border-zinc-800/80 bg-[#18181b] shadow-none">
-      <CardContent className="px-5 py-4">
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          className="flex w-full items-center justify-between"
+    <div className="flex items-center gap-1.5 rounded-md bg-[#18181b] px-2 py-1.5">
+      <Icon className="h-3 w-3 text-zinc-500" />
+      <span className="text-[10px] text-zinc-500">{label}</span>
+      {status ? (
+        <a
+          href={status.url}
+          target="_blank"
+          rel="noreferrer"
+          className={cn("ml-auto text-[10px] font-medium hover:underline",
+            status.status === 200 ? "text-emerald-400" : "text-rose-400"
+          )}
         >
-          <div className="flex items-center gap-2">
-            <Timer className="h-4 w-4 text-zinc-500" />
-            <span className="text-sm font-medium text-zinc-300">其他 Cron Jobs</span>
-            <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-500">{jobs.length}</span>
-            {errorCount > 0 && (
-              <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-xs text-rose-300">{errorCount} err</span>
-            )}
-          </div>
-          <ChevronDown className={cn("h-4 w-4 text-zinc-500 transition-transform", expanded && "rotate-180")} />
-        </button>
-        {expanded && (
-          <div className="mt-3 space-y-1.5 border-t border-zinc-800/40 pt-3">
-            {jobs.map((job) => (
-              <div key={job.id} className="flex items-center gap-2 text-xs">
-                <StatusPill ok={job.lastStatus === "ok"}>{job.lastStatus || "—"}</StatusPill>
-                <span className="min-w-0 flex-1 truncate text-zinc-300" title={job.name}>{job.name}</span>
-                <span className="shrink-0 text-zinc-600">{job.agent || "—"}</span>
-                <span className="shrink-0 text-zinc-600">{job.schedule || "—"}</span>
-                <span className="shrink-0 tabular-nums text-zinc-500">{formatDateTime(job.lastRun)}</span>
-                {(job.consecutiveErrors ?? 0) > 0 && (
-                  <span className="shrink-0 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[10px] text-rose-300">×{job.consecutiveErrors}</span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          {status.status === 200 ? "正常" : "异常"} ({status.status})
+        </a>
+      ) : (
+        <span className="ml-auto text-[10px] text-zinc-600">无</span>
+      )}
+    </div>
   )
 }
 
 /* ═══════════════════ Server Fleet Tab ═══════════════════ */
 
 function classifyServers(servers: ServerSnapshot[]) {
-  const alertServers: ServerSnapshot[] = []
-  const unreachable: ServerSnapshot[] = []
-  const coreServers: ServerSnapshot[] = []
-  const proxyServers: ServerSnapshot[] = []
-  const otherServers: ServerSnapshot[] = []
-
+  const domestic: ServerSnapshot[] = []
+  const global: ServerSnapshot[] = []
   for (const s of servers) {
-    if ((s.alerts ?? []).length > 0) alertServers.push(s)
-    else if (!s.ssh_reachable) unreachable.push(s)
-    else if (s.name?.startsWith("proxy-")) proxyServers.push(s)
-    else if (["claw-runtime", "mattermost-server", "dev-ubuntu-host", "PVE2"].includes(s.name)) coreServers.push(s)
-    else otherServers.push(s)
+    const isChina = (s.cloud || "").toLowerCase().includes("china") || (s.region || "").toLowerCase().includes("china")
+    if (isChina) domestic.push(s)
+    else global.push(s)
   }
-  return { alertServers, unreachable, coreServers, proxyServers, otherServers }
+  // Sort: unreachable first in each group
+  const sortFn = (a: ServerSnapshot, b: ServerSnapshot) => {
+    if (a.ssh_reachable === b.ssh_reachable) return a.name.localeCompare(b.name)
+    return a.ssh_reachable ? 1 : -1
+  }
+  domestic.sort(sortFn)
+  global.sort(sortFn)
+  return { domestic, global }
 }
 
-const SERVER_PROXY_TARGET: CommandTarget = {
-  id: "server-proxy-ottor",
-  name: "Ottor",
-  emoji: "🔬",
-  user_id: "ctgkdui9n38idyepmdzaoccgdw",
-  kind: "server",
-}
-
-function ServerFleetTab({ servers, loading, onSelectTarget }: { servers: ServerSnapshot[]; loading: boolean; onSelectTarget: (t: CommandTarget) => void }) {
-  const [proxyExpanded, setProxyExpanded] = useState(false)
-  const [unreachableExpanded, setUnreachableExpanded] = useState(false)
-  const onlineCount = servers.filter((s) => s.ssh_reachable).length
-  const totalAlerts = servers.reduce((sum, s) => sum + (s.alerts?.length ?? 0), 0)
-  const { alertServers, unreachable, coreServers, proxyServers, otherServers } = useMemo(() => classifyServers(servers), [servers])
-
-  const overviewCards = useMemo(() => [
-    { title: "服务器总数", value: `${servers.length}`, accent: "text-blue-300", icon: Monitor },
-    { title: "SSH 可达", value: `${onlineCount}/${servers.length}`, accent: "text-emerald-300", icon: Server },
-    { title: "告警", value: `${totalAlerts}`, accent: totalAlerts > 0 ? "text-rose-300" : "text-zinc-400", icon: Activity },
-  ], [servers.length, onlineCount, totalAlerts])
-
+function ServerFleetTab({ servers, loading, selectedTargets, onToggleTarget }: {
+  servers: ServerSnapshot[]; loading: boolean; selectedTargets: CommandTarget[]; onToggleTarget: (t: CommandTarget) => void
+}) {
+  const { domestic, global } = useMemo(() => classifyServers(servers), [servers])
   return (
     <div className="space-y-6">
-      {/* Mini overview */}
-      <section className="grid grid-cols-3 gap-3">
-        {overviewCards.map((card) => {
-          const Icon = card.icon
-          return (
-            <Card key={card.title} className="border-zinc-800/80 bg-[#18181b] shadow-none">
-              <CardContent className="flex items-center justify-between gap-3 px-5 py-4">
-                <div>
-                  <p className="text-xs text-zinc-500">{card.title}</p>
-                  <p className={`mt-1 text-xl font-semibold ${card.accent}`}>{card.value}</p>
+      {loading && servers.length === 0 ? <EmptyRow text="加载中..." /> : servers.length === 0 ? <EmptyRow text="暂无服务器数据" /> : (
+        <>
+          {domestic.length > 0 && <ServerGroup label="国内区域" flag="🇨🇳" servers={domestic} selectedTargets={selectedTargets} onToggleTarget={onToggleTarget} />}
+          {global.length > 0 && <ServerGroup label="全球区域" flag="🌍" servers={global} selectedTargets={selectedTargets} onToggleTarget={onToggleTarget} />}
+        </>
+      )}
+    </div>
+  )
+}
+
+function ServerGroup({ label, flag, servers, selectedTargets, onToggleTarget }: {
+  label: string; flag: string; servers: ServerSnapshot[]; selectedTargets: CommandTarget[]; onToggleTarget: (t: CommandTarget) => void
+}) {
+  return (
+    <section className="space-y-2.5">
+      <h3 className="flex items-center gap-2 px-0.5 text-sm font-medium text-zinc-400">
+        <span>{flag}</span> {label}
+        <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">{servers.length}</span>
+      </h3>
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+        {servers.map((server) => (
+          <ServerCard
+            key={server.id}
+            server={server}
+            selected={selectedTargets.some(t => t.id === `server:${server.id}`)}
+            onToggle={() => onToggleTarget({ id: `server:${server.id}`, name: server.name, emoji: "🖥️", user_id: "server-proxy-ottor", kind: "server" })}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function ServerCard({ server, selected, onToggle }: { server: ServerSnapshot; selected: boolean; onToggle: () => void }) {
+  const [expanded, setExpanded] = useState(false)
+  const isOC = (server.tags ?? []).includes("openclaw") || server.services.some(s => s.name.toLowerCase().includes("openclaw"))
+  const alerts = server.alerts ?? []
+  const hasAlerts = alerts.length > 0
+
+  // Sort: errors first
+  const sortedSvc = [...(server.services ?? [])].sort((a, b) => {
+    if (a.status === b.status) return 0
+    return a.status === "running" ? 1 : -1
+  })
+
+  const memPct = server.memory_total_mb ? Math.round((server.memory_used_mb / server.memory_total_mb) * 100) : 0
+  const diskPct = server.disk_usage_pct ?? 0
+
+  return (
+    <div className={cn(
+      "relative flex flex-col overflow-hidden rounded-xl border bg-[#111113] transition-all hover:border-zinc-700",
+      selected ? "border-emerald-500/50 bg-emerald-500/5 ring-1 ring-emerald-500/20" : "border-zinc-800/80",
+      hasAlerts && !selected && "border-rose-500/40 bg-rose-500/5"
+    )}>
+      {/* OpenClaw watermark */}
+      {isOC && <div className="pointer-events-none absolute -right-4 -top-4 rotate-12 opacity-[0.04]"><Shield className="h-28 w-28 text-emerald-500" /></div>}
+
+      {/* Collapsed row */}
+      <div className="flex items-center gap-2.5 p-3 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        <div className={cn(
+          "relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border",
+          hasAlerts ? "border-rose-500/30 bg-rose-500/10 text-rose-400" : isOC ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" : "border-zinc-800 bg-[#18181b] text-zinc-400"
+        )}>
+          {isOC ? <Shield className="h-4 w-4" /> : <Server className="h-4 w-4" />}
+          {!server.ssh_reachable && <span className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border border-[#111113] bg-rose-500 text-[8px] font-bold text-white">!</span>}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate text-sm font-medium text-zinc-100">{server.name}</span>
+            <span className="shrink-0 text-[10px] text-zinc-500">{fmtUptime(server.uptime_seconds)}</span>
+          </div>
+          {/* One-line service tags */}
+          <div className="mt-1 flex h-[18px] items-center gap-1 overflow-hidden">
+            {sortedSvc.map((svc) => <SvcTag key={svc.name} name={svc.name} status={svc.status} />)}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-500 transition-transform", expanded && "rotate-180")} />
+          <button onClick={(e) => { e.stopPropagation(); onToggle() }} className={cn(
+            "flex h-5 w-5 items-center justify-center rounded transition",
+            selected ? "bg-emerald-500 text-white" : "border border-zinc-700 bg-zinc-800/50 text-zinc-500 hover:bg-zinc-700"
+          )}>
+            {selected && <Chk className="h-3 w-3" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Expanded */}
+      {expanded && (
+        <div className="border-t border-zinc-800/60 bg-[#0c0c0e]/50 px-3 py-2.5 space-y-2.5">
+          {/* Info row */}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-zinc-500">
+            <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{server.region || "—"}</span>
+            <span className="inline-flex items-center gap-1"><Globe className="h-3 w-3" />{server.cloud || "—"}</span>
+            <span className="inline-flex items-center gap-1"><HardDrive className="h-3 w-3" />{server.ip}</span>
+          </div>
+
+          {/* Memory & Disk bars */}
+          <div className="grid grid-cols-2 gap-2">
+            <MiniBar icon={Cpu} label="内存" value={memPct} detail={`${server.memory_used_mb ?? 0}/${server.memory_total_mb ?? 0} MB`} />
+            <MiniBar icon={HardDrive} label="磁盘" value={diskPct} detail={`${server.disk_used_gb ?? 0}/${server.disk_total_gb ?? 0} GB`} />
+          </div>
+
+          {/* Alerts */}
+          {hasAlerts && (
+            <div className="space-y-1 rounded-md bg-rose-500/10 p-2">
+              {alerts.map((a, i) => (
+                <div key={i} className="flex items-start gap-1.5 text-[10px] text-rose-300">
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                  <span>{a.message}</span>
                 </div>
-                <div className="rounded-2xl border border-zinc-800 bg-[#111113] p-2.5 text-zinc-400">
-                  <Icon className="h-4 w-4" />
-                </div>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </section>
-
-      {loading && servers.length === 0 ? (
-        <EmptyRow text="加载中..." />
-      ) : servers.length === 0 ? (
-        <EmptyRow text="暂无服务器数据" />
-      ) : (
-        <div className="space-y-8">
-          {/* Alert servers — always top, always visible */}
-          {alertServers.length > 0 && (
-            <ServerGroup title={`🚨 告警 (${alertServers.length})`} accent="text-rose-300">
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
-                {alertServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="core" onSelectTarget={onSelectTarget} />)}
-              </div>
-            </ServerGroup>
+              ))}
+            </div>
           )}
 
-          {/* Core servers — full-width when ≤2 */}
-          {coreServers.length > 0 && (
-            <ServerGroup title={`🏢 核心服务 (${coreServers.length})`} accent="text-blue-300">
-              <div className={cn(
-                "grid gap-3",
-                coreServers.length === 1 ? "grid-cols-1" :
-                coreServers.length === 2 ? "grid-cols-1 lg:grid-cols-2" :
-                "grid-cols-1 lg:grid-cols-2 xl:grid-cols-3"
-              )}>
-                {coreServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="core" onSelectTarget={onSelectTarget} />)}
-              </div>
-            </ServerGroup>
-          )}
-
-          {/* Other named servers */}
-          {otherServers.length > 0 && (
-            <ServerGroup title={`🖥️ 其他服务 (${otherServers.length})`} accent="text-zinc-300">
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
-                {otherServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="core" onSelectTarget={onSelectTarget} />)}
-              </div>
-            </ServerGroup>
-          )}
-
-          {/* Proxy nodes — collapsed by default */}
-          {proxyServers.length > 0 && (() => {
-            const memPcts = proxyServers.map((p) => computeUsagePct(p.memory_used_mb, p.memory_total_mb))
-            const avgMem = Math.round(memPcts.reduce((a, b) => a + b, 0) / memPcts.length)
-            const maxMem = Math.max(...memPcts)
-            const allHealthy = proxyServers.every((p) => p.ssh_reachable)
-            return (
-              <ServerGroup
-                title={`🌐 代理节点 (${proxyServers.length})`}
-                accent="text-zinc-400"
-                collapsible
-                expanded={proxyExpanded}
-                onToggle={() => setProxyExpanded(!proxyExpanded)}
-                summary={`${allHealthy ? "全部健康" : "⚠ 部分异常"} · 内存 ${avgMem}% 均 / ${maxMem}% 峰`}
-              >
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {proxyServers.map((s) => <ServerFleetCard key={s.id} server={s} mode="compact" onSelectTarget={onSelectTarget} />)}
-                </div>
-              </ServerGroup>
-            )
-          })()}
-
-          {/* Unreachable — collapsed by default */}
-          {unreachable.length > 0 && (
-            <ServerGroup
-              title={`❌ 不可达 (${unreachable.length})`}
-              accent="text-zinc-500"
-              collapsible
-              expanded={unreachableExpanded}
-              onToggle={() => setUnreachableExpanded(!unreachableExpanded)}
-              summary={`${unreachable.length} 台 SSH 不可达`}
-            >
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {unreachable.map((s) => <ServerFleetCard key={s.id} server={s} mode="compact" onSelectTarget={onSelectTarget} />)}
-              </div>
-            </ServerGroup>
-          )}
+          {/* Action */}
+          <div className="flex justify-end">
+            <button onClick={(e) => { e.stopPropagation(); onToggle() }} className="flex items-center gap-1 text-[10px] text-emerald-400 hover:text-emerald-300">
+              <MessageSquare className="h-3 w-3" />{selected ? "取消选中" : "发起对话"}
+            </button>
+          </div>
         </div>
       )}
     </div>
   )
 }
 
-function ServerGroup({ title, accent, children, collapsible, expanded, onToggle, summary }: {
-  title: string; accent: string; children: React.ReactNode
-  collapsible?: boolean; expanded?: boolean; onToggle?: () => void; summary?: string
-}) {
+function MiniBar({ icon: Icon, label, value, detail }: { icon: React.ElementType; label: string; value: number; detail: string }) {
+  const tone = value > 85 ? "rose" : value > 60 ? "amber" : "emerald"
+  const barColor = tone === "rose" ? "bg-rose-500" : tone === "amber" ? "bg-amber-500" : "bg-emerald-500"
   return (
-    <section>
-      {collapsible ? (
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={expanded}
-          className="mb-3 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-zinc-800/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
-        >
-          <h3 className={`text-sm font-semibold ${accent}`}>{title}</h3>
-          {summary && <span className="text-xs text-zinc-500">{summary}</span>}
-          <ChevronDown className={cn("ml-auto h-4 w-4 text-zinc-500 transition-transform", expanded && "rotate-180")} />
-        </button>
-      ) : (
-        <h3 className={`mb-3 pl-2 text-sm font-semibold ${accent}`}>{title}</h3>
-      )}
-      {(!collapsible || expanded) && children}
-    </section>
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-[10px]">
+        <span className="inline-flex items-center gap-1 text-zinc-500"><Icon className="h-3 w-3" />{label}</span>
+        <span className="text-zinc-400">{value}%</span>
+      </div>
+      <div className="h-1 w-full rounded-full bg-zinc-800">
+        <div className={cn("h-full rounded-full transition-all", barColor)} style={{ width: `${Math.min(value, 100)}%` }} />
+      </div>
+      <div className="text-[9px] text-zinc-600">{detail}</div>
+    </div>
   )
+}
+
+function SvcTag({ name, status }: { name: string; status: string }) {
+  const ok = status === "running"
+  return (
+    <span className={cn(
+      "shrink-0 rounded px-1 py-0.5 text-[9px] font-medium border leading-none",
+      ok ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-400/80" : "border-rose-500/20 bg-rose-500/5 text-rose-400/80"
+    )}>{name}</span>
+  )
+}
+
+function Chk({ className }: { className?: string }) {
+  return <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M20 6 9 17l-5-5" /></svg>
 }
 
 /* ═══════════════════ Projects Tab ═══════════════════ */
 
 function ProjectsTab({ stats, projects, recentNotes, loading, onCreateProject, onOpenProject }: {
-  stats: Stats
-  projects: Project[]
-  recentNotes: RecentNotePreview[]
-  loading: boolean
-  onCreateProject: () => void
-  onOpenProject: (slug: string) => void
+  stats: Stats; projects: Project[]; recentNotes: RecentNotePreview[]; loading: boolean; onCreateProject: () => void; onOpenProject: (slug: string) => void
 }) {
-  const stageSummary = STAGES
-    .map((stage) => `${stage.icon}${projects.filter((p) => p.stage === stage.id).length}`)
-    .join(" ")
-  const pendingTasks = Math.max(stats.tasks - stats.tasksDone, 0)
-  const latestNotePreview = recentNotes[0] ? truncateInlineText(recentNotes[0].content, 20) : "暂无笔记"
-
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-4 sm:space-y-8">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="hidden grid-cols-4 gap-3 sm:grid">
-          <StatCard label="项目" value={stats.total} tone="zinc" />
-          <StatCard label="进行中" value={stats.active} tone="emerald" />
-          <StatCard label="已完成" value={stats.completed} tone="cyan" />
-          <StatCard label="任务完成" value={`${stats.tasksDone}/${stats.tasks}`} tone="amber" />
-        </div>
-        <div className="sm:hidden">
-          <CompactStatsBar stats={stats} />
-        </div>
-        <button
-          type="button"
-          onClick={onCreateProject}
-          className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-[#111113] px-4 text-xs font-medium text-zinc-100 transition hover:border-emerald-400/40 hover:bg-[#17171b] hover:text-emerald-200 sm:h-11 sm:w-auto sm:text-sm"
-        >
-          <Plus className="h-4 w-4" />
-          新建研究项目
-        </button>
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+        <StatCard label="Total" value={stats.total} tone="zinc" />
+        <StatCard label="Active" value={stats.active} tone="emerald" />
+        <StatCard label="Done" value={stats.completed} tone="cyan" />
+        <StatCard label="Tasks" value={`${stats.tasksDone}/${stats.tasks}`} tone="amber" />
       </div>
-
-      <div className="grid gap-4 sm:gap-8 xl:grid-cols-[minmax(0,1.45fr)_340px]">
-        <section className="space-y-3 sm:space-y-5">
-          {loading && projects.length === 0 ? (
-            <Card className="border-zinc-800/80 bg-[#18181b] shadow-none">
-              <CardContent className="px-5 py-12 text-center text-sm text-zinc-500">
-                正在加载项目列表...
-              </CardContent>
-            </Card>
-          ) : projects.length === 0 ? (
-            <Card className="border-zinc-800/80 bg-[#18181b] shadow-none">
-              <CardContent className="flex flex-col items-center px-5 py-16 text-center">
-                <FlaskConical className="mb-4 h-10 w-10 text-zinc-700" />
-                <p className="text-base text-zinc-200">还没有研究项目</p>
-                <button
-                  type="button"
-                  onClick={onCreateProject}
-                  className="mt-5 inline-flex h-10 items-center rounded-xl border border-zinc-700 bg-[#111113] px-4 text-sm font-medium text-zinc-100 transition hover:border-emerald-400/40 hover:bg-[#17171b] hover:text-emerald-200"
-                >
-                  创建第一个项目
-                </button>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-2 sm:space-y-4">
-              {projects.map((project) => (
-                <ProjectCard key={project.id} project={project} onClick={() => onOpenProject(project.slug)} />
-              ))}
+      <div className="flex flex-col gap-5 xl:flex-row">
+        <div className="flex-1 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-zinc-100">全部项目</h3>
+            <button onClick={onCreateProject} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 bg-[#18181b] px-2.5 py-1 text-xs font-medium text-zinc-300 hover:border-emerald-500/40 hover:text-emerald-300">
+              <Plus className="h-3 w-3" />新建
+            </button>
+          </div>
+          {loading && projects.length === 0 ? <EmptyRow text="加载中..." /> : projects.length === 0 ? <EmptyRow text="暂无项目" /> : (
+            <div className="space-y-2.5">
+              {projects.map((p) => <ProjectCard key={p.id} project={p} onClick={() => onOpenProject(p.slug)} />)}
             </div>
           )}
-
-          <div className="space-y-3 sm:hidden">
-            <MobileDisclosure title="阶段概览" summary={stageSummary}>
-              <StageOverviewList projects={projects} />
-            </MobileDisclosure>
-            <MobileDisclosure title="任务执行" summary={`${pendingTasks} 个待办`}>
-              <TaskExecutionCard stats={stats} />
-            </MobileDisclosure>
-            <MobileDisclosure title="最近笔记" summary={latestNotePreview}>
-              <RecentNotesCard notes={recentNotes} />
-            </MobileDisclosure>
-          </div>
-        </section>
-
-        <aside className="hidden space-y-6 sm:block">
-          <StageOverviewList projects={projects} />
-          <TaskExecutionCard stats={stats} />
-          <RecentNotesCard notes={recentNotes} />
-        </aside>
+        </div>
+        <div className="xl:w-72 shrink-0">
+          <Card className="border-zinc-800/80 bg-[#111113] shadow-none">
+            <CardHeader className="pb-2 pt-4 px-4"><CardTitle className="text-xs font-medium text-zinc-400">最近笔记</CardTitle></CardHeader>
+            <CardContent className="px-0 pb-1">
+              {recentNotes.length === 0 ? <div className="px-4 pb-3 text-xs text-zinc-500">暂无笔记</div> : (
+                <div className="divide-y divide-zinc-800/40">
+                  {recentNotes.map((n) => (
+                    <div key={n.id} className="px-4 py-2.5 hover:bg-zinc-800/20">
+                      <p className="line-clamp-2 text-[11px] leading-4 text-zinc-300">{n.content}</p>
+                      <div className="mt-1 flex items-center justify-between text-[9px] text-zinc-500">
+                        <span>{n.projectName}</span>
+                        <span>{sharedFormatDateTime(n.created_at, "date")}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   )
 }
 
 function ProjectCard({ project, onClick }: { project: Project; onClick: () => void }) {
-  const stageIndex = STAGES.findIndex((stage) => stage.id === project.stage)
-  const stage = STAGES[stageIndex] || STAGES[0]
+  const stage = STAGES.find((s) => s.id === project.stage) || STAGES[0]
   const progress = getProjectProgress(project)
-
   return (
-    <button type="button" onClick={onClick} className="block w-full text-left">
-      <Card className="border-zinc-800/80 bg-[#18181b] shadow-none transition hover:border-zinc-700 hover:bg-[#1d1d21]">
-        <CardContent className="px-4 py-3 sm:px-5 sm:py-4">
-          <div className="flex min-h-[56px] flex-col justify-between gap-2 sm:min-h-[64px]">
-            <div className="flex items-start justify-between gap-3">
-              <h3 className="min-w-0 flex-1 truncate text-base font-semibold text-zinc-50 sm:text-lg">{project.name}</h3>
-              <StatusBadge status={project.status} />
-            </div>
-            <div className="flex items-center gap-2 text-xs sm:gap-3 sm:text-sm">
-              <span className="min-w-0 truncate font-medium text-zinc-300">{stage.icon} {stage.label}</span>
-              <span className="text-zinc-600">·</span>
-              <span className="shrink-0 font-semibold text-zinc-100">{progress}%</span>
-              <Progress
-                value={progress}
-                className={cn(
-                  "ml-auto h-1 w-16 bg-zinc-900 [&>div]:transition-all sm:h-2 sm:w-24",
-                  project.status === "completed" ? "[&>div]:bg-cyan-500" :
-                  project.status === "paused" ? "[&>div]:bg-amber-500" :
-                  "[&>div]:bg-emerald-500"
-                )}
-              />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </button>
-  )
-}
-
-function StageOverviewList({ projects }: { projects: Project[] }) {
-  return (
-    <Card className="border-zinc-800/80 bg-[#18181b] shadow-none">
-      <CardContent className="space-y-3 px-4 py-4 sm:space-y-4 sm:px-5 sm:py-5">
-        {projects.length === 0 ? (
-          <div className="text-sm text-zinc-500">暂无阶段数据。</div>
-        ) : (
-          projects.map((project) => {
-            const stageIndex = STAGES.findIndex((stage) => stage.id === project.stage)
-            const stage = STAGES[stageIndex] || STAGES[0]
-            return (
-              <div key={project.id} className="space-y-2">
-                <div className="flex items-center justify-between gap-3 text-xs">
-                  <span className="truncate text-zinc-400">{project.name}</span>
-                  <span className="shrink-0 text-zinc-300">{stage.icon} {stage.label}</span>
-                </div>
-                <Progress
-                  value={getProjectProgress(project)}
-                  className={cn(
-                    "h-1 bg-zinc-900 sm:h-2",
-                    project.status === "completed" ? "[&>div]:bg-cyan-500" :
-                    project.status === "paused" ? "[&>div]:bg-amber-500" :
-                    "[&>div]:bg-emerald-500"
-                  )}
-                />
-              </div>
-            )
-          })
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-function TaskExecutionCard({ stats }: { stats: Stats }) {
-  const progress = stats.tasks > 0 ? Math.round((stats.tasksDone / stats.tasks) * 100) : 0
-  return (
-    <Card className="border-zinc-800/80 bg-[#18181b] shadow-none">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm text-zinc-200">全局任务完成率</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3 px-4 pb-4 sm:space-y-4 sm:px-5 sm:pb-5">
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-zinc-500">完成率</span>
-            <span className="font-medium text-zinc-100">{progress}%</span>
-          </div>
-          <Progress value={progress} className="h-1 bg-zinc-900 [&>div]:bg-emerald-500 sm:h-2" />
+    <div onClick={onClick} className="group flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-zinc-800/80 bg-[#18181b] p-3.5 transition hover:border-zinc-700">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm font-semibold text-zinc-100 group-hover:text-emerald-300 transition-colors">{project.name}</span>
+          <StatusBadge status={project.status} />
         </div>
-        <div className="grid grid-cols-3 gap-2 rounded-xl border border-zinc-800/80 bg-[#111113] p-3 sm:gap-3 sm:rounded-2xl sm:p-4">
-          <MiniStat label="项目" value={stats.total} />
-          <MiniStat label="进行中" value={stats.active} accentClassName="text-emerald-300" />
-          <MiniStat label="已完成" value={stats.completed} accentClassName="text-cyan-300" />
+        <div className="mt-0.5 flex items-center gap-2 text-[11px] text-zinc-500">
+          <span>{stage.icon} {stage.label}</span>
+          <span>·</span>
+          <span>{project.task_count ?? 0} 任务</span>
         </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-function RecentNotesCard({ notes }: { notes: RecentNotePreview[] }) {
-  return (
-    <Card className="border-zinc-800/80 bg-[#18181b] shadow-none">
-      <CardContent className="px-0 py-0">
-        {notes.length === 0 ? (
-          <div className="px-5 py-10 text-sm text-zinc-500">暂无笔记记录。</div>
-        ) : (
-          <div className="divide-y divide-zinc-800/70">
-            {notes.map((note) => (
-              <div key={note.id} className="px-4 py-3 sm:px-5 sm:py-4">
-                <p className="line-clamp-2 text-sm leading-6 text-zinc-300 sm:line-clamp-none">{note.content}</p>
-                <div className="mt-2 flex items-center gap-2 text-[11px] text-zinc-500">
-                  <span>{note.projectName}</span>
-                  <span>·</span>
-                  <span>{sharedFormatDateTime(note.created_at, "date")}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-function MiniStat({ label, value, accentClassName }: { label: string; value: string | number; accentClassName?: string }) {
-  return (
-    <div>
-      <div className="text-[10px] tracking-[0.18em] text-zinc-500">{label}</div>
-      <div className={cn("mt-1 text-lg font-semibold text-zinc-100", accentClassName)}>{value}</div>
-    </div>
-  )
-}
-
-/* ═══════════════════ Server Card ═══════════════════ */
-
-function ServerFleetCard({ server, mode = "core", onSelectTarget }: { server: ServerSnapshot; mode?: "core" | "compact"; onSelectTarget: (t: CommandTarget) => void }) {
-  const [expanded, setExpanded] = useState(false)
-  const memoryPct = computeUsagePct(server.memory_used_mb, server.memory_total_mb)
-  const diskPct = clampPercent(server.disk_usage_pct || computeUsagePct(server.disk_used_gb, server.disk_total_gb))
-  const services = server.services ?? []
-  const alerts = server.alerts ?? []
-  const tags = server.tags ?? []
-  const runningServices = services.filter((s) => isServiceRunning(s)).length
-  const stoppedServices = Math.max(services.length - runningServices, 0)
-  const hasAlerts = alerts.length > 0
-  const worstUsage = Math.max(memoryPct, diskPct)
-
-  // Compact mode for proxy/unreachable: minimal single-line card
-  if (mode === "compact") {
-    return (
-      <Card className="border-zinc-800/80 bg-[#111113] shadow-none">
-        <CardContent className="p-0">
-          <button
-            type="button"
-            onClick={() => setExpanded(!expanded)}
-            aria-expanded={expanded}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-zinc-800/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 focus-visible:ring-inset"
-          >
-            <DotIndicator ok={server.ssh_reachable} />
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-200">{server.name}</span>
-            <span className={cn("text-[10px] font-medium", worstUsage > 80 ? "text-rose-300" : worstUsage > 50 ? "text-amber-300" : "text-zinc-500")}>
-              {worstUsage}%
-            </span>
-            <ChevronDown className={cn("h-3 w-3 shrink-0 text-zinc-600 transition-transform", expanded && "rotate-180")} />
-          </button>
-          {expanded && (
-            <div className="space-y-2 border-t border-zinc-800/60 px-3 pb-3 pt-2">
-              <UsageBar label="内存" used={server.memory_used_mb} total={server.memory_total_mb} unit="MB" percent={memoryPct} />
-              <UsageBar label="磁盘" used={server.disk_used_gb} total={server.disk_total_gb} unit="GB" percent={diskPct} />
-              <div className="text-[11px] text-zinc-500">
-                SSH: <span className={server.ssh_reachable ? "text-emerald-300" : "text-rose-300"}>{server.ssh_reachable ? "✅" : "❌"}</span> {server.ip}:{server.ssh_port}
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    )
-  }
-
-  // Core mode: full card with alerts surfaced
-  return (
-    <Card className={cn(
-      "shadow-none transition-colors",
-      hasAlerts ? "border-l-2 border-l-rose-500 border-t-zinc-800/80 border-r-zinc-800/80 border-b-zinc-800/80 bg-rose-500/5 shadow-[inset_2px_0_8px_-4px_rgba(244,63,94,0.3)]" :
-      !server.ssh_reachable ? "border-rose-500/40 bg-[#111113]" :
-      "border-zinc-800/80 bg-[#111113]"
-    )}>
-      <CardContent className="p-0">
-        {/* Collapsed: always visible summary row */}
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          aria-expanded={expanded}
-          className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-zinc-800/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 focus-visible:ring-inset"
-        >
-          <DotIndicator ok={server.ssh_reachable && !hasAlerts} />
-
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-sm font-semibold text-zinc-50">{server.name}</span>
-              {hasAlerts && (
-                <span
-                  className="rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-medium text-rose-300"
-                  title={alerts.map((a) => `[${a.level}] ${a.message}`).join("\n")}
-                  aria-label={`告警: ${alerts.map((a) => a.message).join("; ")}`}
-                >
-                  ⚠ {summarizeAlert(alerts[0])}
-                </span>
-              )}
-            </div>
-            <div className="text-[11px] text-zinc-500">{server.role || server.cloud || "—"}</div>
-          </div>
-
-          {/* MEM/DISK mini bars */}
-          <div className="hidden w-32 gap-1.5 sm:flex sm:flex-col">
-            <MiniUsageBar label="MEM" percent={memoryPct} />
-            <MiniUsageBar label="DISK" percent={diskPct} />
-          </div>
-
-          <div className="sm:hidden">
-            <span className={cn("text-xs font-medium", worstUsage > 80 ? "text-rose-300" : worstUsage > 50 ? "text-amber-300" : "text-emerald-300")}>
-              {worstUsage}%
-            </span>
-          </div>
-
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              onSelectTarget({
-                ...SERVER_PROXY_TARGET,
-                id: `server:${server.id}`,
-                name: server.name,
-                emoji: "🖥️",
-              })
-            }}
-            className="rounded-lg border border-zinc-800 bg-[#18181b] p-2 text-zinc-500 transition hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-300"
-            title={`联系服务器代理处理 ${server.name}`}
-          >
-            <MessageSquare className="h-4 w-4" />
-          </button>
-
-          {/* Service count + SSH status */}
-          <div className="hidden items-center gap-2 text-[11px] lg:flex">
-            <span className="text-zinc-500"><span className="text-emerald-400">{runningServices}</span>/{services.length}</span>
-            <span className={server.ssh_reachable ? "text-emerald-400" : "text-rose-400"}>{server.ssh_reachable ? "🟢" : "🔴"}</span>
-          </div>
-
-          <ChevronDown className={cn("h-4 w-4 shrink-0 text-zinc-500 transition-transform", expanded && "rotate-180")} />
-        </button>
-
-        {/* Core card: inline service badges when not expanded */}
-        {!expanded && services.length > 0 && (
-          <div className="flex flex-wrap gap-1 border-t border-zinc-800/40 px-4 py-2">
-            {services.slice(0, 8).map((service) => <ServiceBadge key={`${server.id}-${service.name}-inline`} service={service} />)}
-            {services.length > 8 && (
-              <Badge variant="outline" className="border-zinc-700 bg-[#18181b] text-[10px] text-zinc-500">
-                +{services.length - 8}
-              </Badge>
-            )}
-          </div>
-        )}
-
-        {/* Expanded: full details */}
-        {expanded && (
-          <div className="space-y-4 border-t border-zinc-800/60 px-4 pb-4 pt-3">
-            <div className="space-y-2.5">
-              <MetricLine label="CPU" value={`${server.cpu_cores ?? 0} cores`} />
-              <UsageBar label="内存" used={server.memory_used_mb} total={server.memory_total_mb} unit="MB" percent={memoryPct} />
-              <UsageBar label="磁盘" used={server.disk_used_gb} total={server.disk_total_gb} unit="GB" percent={diskPct} />
-              <MetricLine label="运行时间" value={formatUptime(server.uptime_seconds)} />
-            </div>
-
-            {services.length > 0 && (
-              <div className="space-y-2 border-t border-zinc-800/60 pt-3">
-                <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400">
-                  <span>服务: <span className="text-emerald-300">{runningServices} running</span> / <span className="text-rose-300">{stoppedServices} stopped</span></span>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {services.map((service) => <ServiceBadge key={`${server.id}-${service.name}`} service={service} />)}
-                </div>
-              </div>
-            )}
-
-            <div className="space-y-2 border-t border-zinc-800/60 pt-3 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-zinc-400">
-                  SSH: <span className={server.ssh_reachable ? "text-emerald-300" : "text-rose-300"}>{server.ssh_reachable ? "✅" : "❌"}</span>{" "}
-                  {server.ip}:{server.ssh_port}
-                </span>
-                <span className="text-zinc-600">{server.cloud || "—"} · {server.region || "—"}</span>
-              </div>
-              <div className="text-zinc-600">{server.os || "—"}</div>
-              {tags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {tags.map((tag) => (
-                    <Badge key={`${server.id}-${tag}`} variant="outline" className="border-zinc-700 bg-[#18181b] text-xs text-zinc-400">
-                      {tag}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {hasAlerts && <AlertsPanel alerts={alerts} />}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-function MiniUsageBar({ label, percent }: { label: string; percent: number }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="w-7 text-[9px] text-zinc-500">{label}</span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-800">
-        <div className={`h-full rounded-full ${getUsageBarColor(percent)}`} style={{ width: `${percent}%` }} />
       </div>
-      <span className={cn("w-7 text-right text-[9px]", percent > 80 ? "text-rose-300" : "text-zinc-500")}>{percent}%</span>
+      <div className="w-12 shrink-0 text-right text-sm font-medium text-zinc-300">{progress}%</div>
     </div>
   )
 }
 
-/* ═══════════════════ Shared UI ═══════════════════ */
-
-function DotIndicator({ ok, dim }: { ok: boolean; dim?: boolean }) {
-  return (
-    <span
-      className={`inline-block h-2 w-2 rounded-full ${
-        dim ? "bg-zinc-700" : ok ? "bg-emerald-400" : "bg-rose-400"
-      }`}
-    />
-  )
-}
-
-function UsageBar({ label, used, total, unit, percent }: {
-  label: string; used: number; total: number; unit: string; percent: number
-}) {
-  const color = getUsageBarColor(percent)
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="text-zinc-400">{label}</span>
-        <span className="text-zinc-500">{fmtNum(used)}/{fmtNum(total)} {unit} ({percent}%)</span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-zinc-800">
-        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${percent}%` }} />
-      </div>
-    </div>
-  )
-}
-
-function MetricLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 text-xs">
-      <span className="text-zinc-400">{label}</span>
-      <span className="text-zinc-500">{value}</span>
-    </div>
-  )
-}
-
-function ServiceBadge({ service }: { service: ServerService }) {
-  const running = isServiceRunning(service)
-  return (
-    <span className={`rounded-full border px-2 py-0.5 text-xs ${
-      running ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-rose-500/30 bg-rose-500/10 text-rose-300"
-    }`}>
-      {service.name}
-    </span>
-  )
-}
-
-function AlertsPanel({ alerts }: { alerts: ServerAlert[] }) {
-  return (
-    <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3">
-      <div className="mb-1.5 text-xs font-medium text-rose-300">告警</div>
-      <div className="space-y-1 text-xs text-rose-200">
-        {alerts.map((alert, i) => (
-          <div key={`${alert.level}-${i}`}>
-            <span className="font-medium uppercase">{alert.level}</span> · {alert.message}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function StatusPill({ ok, children }: { ok: boolean; children: React.ReactNode }) {
-  return (
-    <Badge
-      variant="outline"
-      className={ok ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-rose-500/30 bg-rose-500/10 text-rose-300"}
-    >
-      {children}
-    </Badge>
-  )
-}
+/* ═══════════════════ Shared ═══════════════════ */
 
 function EmptyRow({ text }: { text: string }) {
-  return <div className="rounded-xl border border-dashed border-zinc-800/80 bg-[#111113] px-4 py-8 text-center text-sm text-zinc-500">{text}</div>
+  return <div className="rounded-xl border border-dashed border-zinc-800/80 bg-[#111113] px-4 py-6 text-center text-sm text-zinc-500">{text}</div>
 }
 
-/* ═══════════════════ Utilities ═══════════════════ */
-
-function formatDateTime(value?: string | null) {
-  if (!value) return "—"
-  const d = new Date(value)
+function fmtDateTime(v?: string | null) {
+  if (!v) return "—"
+  const d = new Date(v)
   if (Number.isNaN(d.getTime())) return "—"
   return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(d)
 }
 
-function toTimestamp(value?: string | null) {
-  if (!value) return null
-  const ts = new Date(value).getTime()
-  return Number.isNaN(ts) ? null : ts
+function fmtUptime(sec?: number) {
+  const s = Math.max(0, Math.floor(sec ?? 0))
+  const d = Math.floor(s / 86400)
+  if (d > 0) return `${d}d`
+  const h = Math.floor((s % 86400) / 3600)
+  if (h > 0) return `${h}h`
+  return `${Math.floor((s % 3600) / 60)}m`
 }
-
-function findNearestHistoryPoint(points: string[] | undefined, requested?: string | null) {
-  const sourcePoints = points ?? []
-  if (sourcePoints.length === 0) return null
-  if (!requested) return sourcePoints[0] ?? null
-
-  const requestedTs = toTimestamp(requested)
-  if (requestedTs === null) return sourcePoints.find((point) => point === requested) ?? sourcePoints[0] ?? null
-
-  for (const point of sourcePoints) {
-    const pointTs = toTimestamp(point)
-    if (pointTs !== null && pointTs <= requestedTs) return point
-    if (point === requested) return point
-  }
-
-  return sourcePoints[sourcePoints.length - 1] ?? null
-}
-
-function collectServerSnapshotTimes(servers: ServerSnapshot[]) {
-  return Array.from(new Set(
-    servers
-      .map((server) => server.snapshot_time)
-      .filter((snapshotTime): snapshotTime is string => Boolean(snapshotTime)),
-  )).sort((a, b) => (toTimestamp(b) ?? 0) - (toTimestamp(a) ?? 0))
-}
-
-function areSameSnapshotTime(left?: string | null, right?: string | null) {
-  if (!left || !right) return false
-  const leftTs = toTimestamp(left)
-  const rightTs = toTimestamp(right)
-  if (leftTs !== null && rightTs !== null) return leftTs === rightTs
-  return left === right
-}
-
-function formatUptime(seconds?: number) {
-  const s = Math.max(0, Math.floor(seconds ?? 0))
-  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60)
-  if (d > 0) return `${d}天 ${h}小时`
-  if (h > 0) return `${h}小时 ${m}分钟`
-  return `${m}分钟`
-}
-
-function computeUsagePct(used?: number, total?: number) {
-  if (!total || total <= 0) return 0
-  return clampPercent(Math.round(((used ?? 0) / total) * 100))
-}
-
-function clampPercent(v?: number) { return Math.min(100, Math.max(0, Math.round(v ?? 0))) }
-
-function getUsageBarColor(pct: number) {
-  if (pct < 50) return "bg-emerald-500"
-  if (pct <= 80) return "bg-amber-500"
-  return "bg-rose-500"
-}
-
-function isServiceRunning(service: ServerService) { return String(service.status || "").toLowerCase() === "running" }
-
-function summarizeAlert(alert?: ServerAlert): string {
-  if (!alert?.message) return "告警"
-  const msg = alert.message
-  // Detect common patterns and produce structured summaries
-  if (/磁盘|disk/i.test(msg)) {
-    const pct = msg.match(/(\d+)%/)
-    return pct ? `磁盘 ${pct[1]}%` : "磁盘告警"
-  }
-  if (/内存|memory|mem/i.test(msg)) {
-    const pct = msg.match(/(\d+)%/)
-    return pct ? `内存 ${pct[1]}%` : "内存告警"
-  }
-  if (/restart|重启/i.test(msg)) return "容器重启中"
-  if (/cpu/i.test(msg)) return "CPU 过载"
-  if (/ssh|连接|connect/i.test(msg)) return "SSH 异常"
-  // Fallback: first 20 chars
-  return msg.length > 20 ? msg.slice(0, 20) + "…" : msg
-}
-
-function fmtNum(v?: number) { return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 }).format(v ?? 0) }
