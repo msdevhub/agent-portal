@@ -28,7 +28,6 @@ import { Badge } from "@/components/ui/badge"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { EmptyState } from "@/components/portal/shared"
 import { fetchDailyReports, type CronJob, type DailyReport, type DashboardAgent, type DashboardData, type Project, type ServerSnapshot, type Stats } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -481,6 +480,10 @@ function DailyReportsSection({ agentId }: { agentId: string }) {
     }
   }, [agentId])
 
+  const handleToggleReport = (date: string) => {
+    setOpenReport((current) => (current === date ? null : date))
+  }
+
   return (
     <div className="rounded-md border border-zinc-800/50 bg-[#18181b]">
       <div className="flex items-center justify-between gap-2 px-2.5 py-2 text-xs">
@@ -502,25 +505,53 @@ function DailyReportsSection({ agentId }: { agentId: string }) {
             message="这个 bot 还没有可展示的日报。"
           />
         ) : (
-          <Accordion value={openReport} onValueChange={setOpenReport} collapsible className="space-y-2">
-            {reports.map((report) => (
-              <AccordionItem key={report.id} value={report.date} className="rounded-md border-zinc-800/60 bg-[#111113]">
-                <AccordionTrigger className="px-3 py-2 hover:bg-zinc-900/30 sm:px-3 sm:py-2.5 sm:hover:bg-zinc-900/30">
-                  <div className="flex items-center justify-between gap-3 text-xs">
-                    <span className="font-medium text-zinc-200">{report.date}</span>
-                    <span className="rounded-full border border-zinc-800 bg-zinc-900/80 px-2 py-0.5 text-[10px] text-zinc-500">
-                      {report.agent_id || agentId}
-                    </span>
-                  </div>
-                </AccordionTrigger>
-                <AccordionContent className="px-3 py-3 sm:px-3 sm:py-3">
-                  <div className="prose prose-invert prose-sm max-w-none prose-headings:text-zinc-100 prose-p:text-zinc-300 prose-p:leading-7 prose-a:text-cyan-300 prose-strong:text-zinc-100 prose-code:rounded prose-code:bg-zinc-800/50 prose-code:px-1.5 prose-code:py-0.5 prose-code:text-emerald-300 prose-pre:border prose-pre:border-zinc-800/60 prose-pre:bg-[#09090b] prose-li:text-zinc-300 prose-th:text-zinc-200 prose-td:text-zinc-300 prose-hr:border-zinc-800">
-                    <MarkdownBlock content={report.content} />
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-            ))}
-          </Accordion>
+          <div className="space-y-1.5">
+            {reports.map((report, index) => {
+              const expanded = openReport === report.date
+              const isLast = index === reports.length - 1
+
+              return (
+                <div key={report.id} className="relative pl-5">
+                  {!isLast && (
+                    <div className="absolute left-[7px] top-4 bottom-0 w-px bg-zinc-600/35" aria-hidden="true" />
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleToggleReport(report.date)}
+                    className="group relative flex w-full items-start justify-between gap-3 rounded-md px-0 py-1 text-left transition-colors hover:bg-zinc-900/20"
+                  >
+                    <span
+                      className={cn(
+                        "absolute left-[-20px] top-2.5 h-3 w-3 rounded-full border transition-colors",
+                        expanded
+                          ? "border-emerald-400/80 bg-emerald-400 shadow-[0_0_0_2px_rgba(16,185,129,0.12)]"
+                          : "border-zinc-500/70 bg-[#18181b] group-hover:border-zinc-400/80"
+                      )}
+                      aria-hidden="true"
+                    />
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="truncate text-xs font-medium text-zinc-300">{report.date}</span>
+                        <span className="text-[10px] text-zinc-600">{expanded ? "展开" : "收起"}</span>
+                      </div>
+                    </div>
+                  </button>
+
+                  {expanded && (
+                    <div className="pb-2 pt-1">
+                      <div className="rounded-md border border-zinc-800/60 bg-[#111113] px-3 py-2.5">
+                        <div className="prose prose-invert prose-sm max-w-none text-sm prose-headings:mb-2 prose-headings:text-zinc-100 prose-headings:text-sm prose-p:my-2 prose-p:text-zinc-300 prose-p:leading-6 prose-a:text-cyan-300 prose-strong:text-zinc-100 prose-code:rounded prose-code:bg-zinc-800/50 prose-code:px-1 prose-code:py-0.5 prose-code:text-emerald-300 prose-pre:border prose-pre:border-zinc-800/60 prose-pre:bg-[#09090b] prose-pre:p-3 prose-li:my-0.5 prose-li:text-zinc-300 prose-th:text-zinc-200 prose-td:text-zinc-300 prose-hr:border-zinc-800 [&_*]:break-words [&_ul]:my-2 [&_ol]:my-2 [&_li>p]:my-0.5">
+                          <MarkdownBlock content={report.content} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
         )}
       </div>
     </div>
