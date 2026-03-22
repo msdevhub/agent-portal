@@ -4,6 +4,8 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3002;
 const MIME_TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
+const CHANGELOG_TTL_MS = 5 * 60 * 1000;
+const changelogCache = new Map();
 
 const SUPABASE_URL = 'https://db.dora.restry.cn';
 const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJzZXJ2aWNlX3JvbGUiLAogICAgImlzcyI6ICJzdXBhYmFzZS1kZW1vIiwKICAgICJpYXQiOiAxNjQxNzY5MjAwLAogICAgImV4cCI6IDE3OTk1MzU2MDAKfQ.DaYlNEoUrrEn2Ig7tqibS-PHK5vgusbcbo7X36XVt4Q';
@@ -811,6 +813,7 @@ const SYNC_INTERVAL_MS = Number(process.env.SYNC_INTERVAL_MS) || 5 * 60 * 1000; 
 const PROJECT_REGISTRY = {
   clawcraft: {
     dir: 'clawcraft',
+    githubRepo: 'msdevhub/clawcraft',
     deployments: [
       { stage: 'build', title: 'ClawCraft 游戏界面', type: 'link', url: 'http://proxy-kr-tiger.koreacentral.cloudapp.azure.com:18789/', description: '帝国时代风格 Agent 可视化游戏 — PixiJS + React + shadcn' },
     ],
@@ -826,6 +829,7 @@ const PROJECT_REGISTRY = {
   },
   'agentic-bi': {
     dir: 'agentic-bi',
+    githubRepo: null,
     deployments: [],
     keyDocs: [
       { path: 'README.md', stage: 'idea', title: '项目说明', type: 'doc' },
@@ -836,6 +840,7 @@ const PROJECT_REGISTRY = {
   },
   'agent-portal': {
     dir: 'agent-portal',
+    githubRepo: null,
     deployments: [
       { stage: 'build', title: 'Agent Portal 管理平台', type: 'link', url: 'https://agent-project.clawlines.net/', description: '研究项目管理平台 — React + shadcn + Supabase' },
     ],
@@ -846,6 +851,59 @@ const PROJECT_REGISTRY = {
     ],
   },
 };
+
+function getChangelogProjectConfigs() {
+  return [
+    { slug: 'clawline-client-web', name: 'Clawline Client Web', githubRepo: 'clawline/client-web' },
+    { slug: 'clawline-gateway', name: 'Clawline Gateway', githubRepo: 'clawline/gateway' },
+    { slug: 'clawline-channel', name: 'Clawline Channel', githubRepo: 'clawline/channel' },
+  ];
+}
+
+function getProjectGithubRepo(slug, projectName = '') {
+  const registryRepo = PROJECT_REGISTRY[slug]?.githubRepo;
+  if (registryRepo) return registryRepo;
+
+  const matched = getChangelogProjectConfigs().find(item =>
+    item.slug === slug || item.name.toLowerCase() === String(projectName || '').toLowerCase()
+  );
+  return matched?.githubRepo || null;
+}
+
+async function fetchGithubChangelog(repo) {
+  const cacheKey = String(repo || '').trim().toLowerCase();
+  const now = Date.now();
+  const cached = changelogCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.data;
+
+  const headers = {
+    'User-Agent': 'agent-portal-changelog',
+    Accept: 'application/vnd.github+json',
+  };
+
+  const githubToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_API_TOKEN || '';
+  if (githubToken) headers.Authorization = `Bearer ${githubToken}`;
+
+  const response = await fetch(`https://api.github.com/repos/${repo}/commits?per_page=30`, { headers });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`GitHub API error (${response.status}): ${body.slice(0, 200)}`);
+  }
+
+  const payload = await response.json();
+  const commits = Array.isArray(payload)
+    ? payload.map(item => ({
+        sha: item?.sha || '',
+        message: item?.commit?.message || '',
+        author: item?.commit?.author?.name || item?.author?.login || 'Unknown',
+        date: item?.commit?.author?.date || item?.commit?.committer?.date || null,
+      }))
+    : [];
+
+  const data = { commits };
+  changelogCache.set(cacheKey, { data, expiresAt: now + CHANGELOG_TTL_MS });
+  return data;
+}
 
 function artifactUrlIsAvailable(url) {
   if (!url) return true;
@@ -913,6 +971,33 @@ app.put('/api/doc/:slug/*', (req, res) => {
   try {
     fs.writeFileSync(fullPath, content, 'utf-8');
     res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/changelog/:slug', async (req, res) => {
+  try {
+    const slug = String(req.params.slug || '');
+    const projects = await dbQuery(`
+      SELECT id, slug, name
+      FROM "AP_projects"
+      WHERE slug = '${esc(slug)}'
+      LIMIT 1
+    `);
+
+    if (!projects.length) {
+      return res.status(404).json({ error: '项目不存在' });
+    }
+
+    const project = projects[0];
+    const githubRepo = getProjectGithubRepo(project.slug, project.name);
+    if (!githubRepo) {
+      return res.status(404).json({ error: '该项目未配置 GitHub 仓库' });
+    }
+
+    const data = await fetchGithubChangelog(githubRepo);
+    res.json({ githubRepo, commits: data.commits ?? [] });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
