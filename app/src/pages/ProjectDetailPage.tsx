@@ -54,13 +54,14 @@ import {
   createTask,
   deleteArtifact,
   deleteTask,
+  fetchChangelog,
   fetchContextFiles,
   fetchMemoryFiles,
   fetchModelContext,
   updateProject,
   updateTask,
 } from "@/lib/api"
-import type { Artifact, ModelContextResponse, Project, Task, WorkspaceFile } from "@/lib/api"
+import type { Artifact, ChangelogCommit, ModelContextResponse, Project, Task, WorkspaceFile } from "@/lib/api"
 import { ARTIFACT_TYPES, NOTE_TYPES, STAGES, STATUS_LABELS, getArtifactTypeLabel, getStageIndex } from "@/lib/constants"
 import { cn } from "@/lib/utils"
 
@@ -104,6 +105,11 @@ export function ProjectDetailPage({
   const [draftStage, setDraftStage] = useState("")
   const [draftDescription, setDraftDescription] = useState("")
 
+  // Changelog state
+  const [changelogCommits, setChangelogCommits] = useState<ChangelogCommit[]>([])
+  const [changelogRepo, setChangelogRepo] = useState("")
+  const [changelogLoading, setChangelogLoading] = useState(false)
+
   useEffect(() => {
     if (!project) return
 
@@ -124,6 +130,19 @@ export function ProjectDetailPage({
         setModelContext(nextModelContext)
       } catch {
         // Optional panel, ignore fetch failures.
+      }
+
+      // Fetch changelog
+      try {
+        setChangelogLoading(true)
+        const cl = await fetchChangelog(project.slug)
+        setChangelogCommits(cl?.commits ?? [])
+        setChangelogRepo(cl?.githubRepo ?? "")
+      } catch {
+        setChangelogCommits([])
+        setChangelogRepo("")
+      } finally {
+        setChangelogLoading(false)
       }
     })()
   }, [onError, project])
@@ -377,6 +396,7 @@ export function ProjectDetailPage({
             <TabsTrigger value="tasks">任务</TabsTrigger>
             <TabsTrigger value="artifacts">产出物</TabsTrigger>
             <TabsTrigger value="context">上下文</TabsTrigger>
+            <TabsTrigger value="changelog">变更日志</TabsTrigger>
             <TabsTrigger value="timeline">时间线</TabsTrigger>
           </TabsList>
 
@@ -719,6 +739,88 @@ export function ProjectDetailPage({
                 </div>
               )}
             </SurfaceCard>
+          </TabsContent>
+
+          <TabsContent value="changelog" className="space-y-3 sm:space-y-6">
+            <SectionHeading
+              className="hidden sm:block"
+              title="变更日志"
+              subtitle="展示 GitHub 仓库最近 30 条提交，便于快速查看项目最近进展。"
+            />
+
+            {changelogLoading ? (
+              <SurfaceCard className="p-6 text-sm text-zinc-400">正在加载提交记录…</SurfaceCard>
+            ) : changelogCommits.length === 0 ? (
+              <EmptyState
+                icon={<Activity className="h-5 w-5" />}
+                title="暂无变更日志"
+                message="当前项目尚未配置 GitHub 仓库，或暂时无法拉取提交记录。"
+              />
+            ) : (
+              <SurfaceCard className="space-y-3 p-3 sm:p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-zinc-100">最近提交</div>
+                    {changelogRepo && (
+                      <a
+                        href={`https://github.com/${changelogRepo}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs text-cyan-400 transition hover:text-cyan-300"
+                      >
+                        {changelogRepo}
+                      </a>
+                    )}
+                  </div>
+                  <div className="text-xs text-zinc-500">{changelogCommits.length} commits</div>
+                </div>
+
+                <div className="space-y-2">
+                  {changelogCommits.map((commit) => {
+                    const message = commit.message.split("\n")[0]
+                    const typeMatch = message.match(/^(\w+)(\(.*\))?:/)
+                    const type = typeMatch ? typeMatch[1] : "other"
+                    
+                    let badgeColor = "bg-zinc-800 text-zinc-400"
+                    if (type === "feat") badgeColor = "bg-emerald-500/10 text-emerald-400"
+                    if (type === "fix") badgeColor = "bg-amber-500/10 text-amber-400"
+                    if (type === "chore") badgeColor = "bg-zinc-700/50 text-zinc-400"
+                    if (type === "docs") badgeColor = "bg-blue-500/10 text-blue-400"
+                    if (type === "refactor") badgeColor = "bg-purple-500/10 text-purple-400"
+
+                    return (
+                      <div key={commit.sha} className="group flex items-start gap-3 rounded-lg border border-zinc-800/50 bg-[#111113] p-3 text-sm transition hover:border-zinc-700 hover:bg-[#161619]">
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex items-center gap-2">
+                            {type !== "other" && (
+                              <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${badgeColor}`}>
+                                {type}
+                              </span>
+                            )}
+                            <span className="line-clamp-1 font-medium text-zinc-300 group-hover:text-zinc-100">
+                              {message}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-zinc-500">
+                            <span>{commit.author}</span>
+                            <span>·</span>
+                            <span>{commit.date}</span>
+                          </div>
+                        </div>
+                        <a
+                          href={commit.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-mono text-xs text-zinc-600 transition hover:text-emerald-400 hover:underline"
+                        >
+                          {commit.sha.substring(0, 7)}
+                        </a>
+                      </div>
+                    )
+                  })}
+                </div>
+              </SurfaceCard>
+            )}
           </TabsContent>
 
           <TabsContent value="timeline" className="space-y-3 sm:space-y-6">

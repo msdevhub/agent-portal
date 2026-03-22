@@ -534,7 +534,7 @@ function DailyReportsSection({ agentId }: { agentId: string }) {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 text-xs">
                         <span className="truncate text-xs font-medium text-zinc-300">{report.date}</span>
-                        <span className="text-[10px] text-zinc-600">{expanded ? "展开" : "收起"}</span>
+                        <span className="text-[10px] text-zinc-600">{expanded ? "收起" : "展开"}</span>
                       </div>
                     </div>
                   </button>

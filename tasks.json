@@ -1,0 +1,74 @@
+[
+  {
+    "id": 1,
+    "stage": "plan",
+    "status": "done",
+    "desc": "设计系统方案（功能、数据模型、页面结构），提交爸爸确认",
+    "created": "2026-03-10",
+    "updated": "2026-03-14",
+    "notes": "5个开放问题全部确认：部署已完成、认证搁置、API可写、单Agent、数据已迁移"
+  },
+  {
+    "id": 2,
+    "stage": "poc",
+    "status": "done",
+    "desc": "Vite + React + shadcn/ui + Supabase 实现 POC",
+    "created": "2026-03-10",
+    "updated": "2026-03-11",
+    "notes": "v3-shadcn 前端已完成并部署。"
+  },
+  {
+    "id": 3,
+    "stage": "poc",
+    "status": "done",
+    "desc": "UX 改进 v3.1：文档弹窗、上下文标记、移动端适配、卡片精简",
+    "created": "2026-03-13",
+    "updated": "2026-03-13",
+    "notes": "完成 7 项改进"
+  },
+  {
+    "id": 4,
+    "stage": "poc",
+    "status": "done",
+    "desc": "架构重构 v3.2：Hash 路由 + 独立详情页 + Tab 导航",
+    "created": "2026-03-13",
+    "updated": "2026-03-14",
+    "notes": "HashRouter、首页与详情页分离、移动端统计区折叠、详情页 4 Tab（任务/产出物/上下文/时间线）"
+  },
+  {
+    "id": 5,
+    "stage": "poc",
+    "status": "done",
+    "desc": "v3.3-v3.4 移动端原生感优化：Gemini 3轮审查 + Codex 全页面紧凑化",
+    "created": "2026-03-14",
+    "updated": "2026-03-14",
+    "notes": "Dialog/Tabs/卡片/任务列表全面优化，修复 ArrowLeft import 黑屏 bug，去掉删除线改灰色，删除按钮同行"
+  },
+  {
+    "id": 6,
+    "stage": "poc",
+    "status": "done",
+    "desc": "创建 project-sync 技能：每小时自动更新项目描述 + 扫描产出物",
+    "created": "2026-03-14",
+    "updated": "2026-03-14",
+    "notes": "skills/project-sync/ 技能 + cron 配置完成，首次同步更新了 3 个项目描述 + 14 个新产出物"
+  },
+  {
+    "id": 7,
+    "stage": "poc",
+    "status": "done",
+    "desc": "迭代 2/3：继续移动端优化循环（Gemini 审查 → Codex 实施）",
+    "created": "2026-03-14",
+    "updated": "2026-03-14",
+    "notes": ""
+  },
+  {
+    "id": 8,
+    "stage": "build",
+    "status": "done",
+    "desc": "轻量重构前端页面结构 + 删除重复 README，统一 CONTEXT 为项目单一文档入口",
+    "created": "2026-03-14",
+    "updated": "2026-03-16",
+    "notes": "按类型分组列表(文档/代码/数据/链接/图片), 去掉阶段Tab切换, 已部署"
+  }
+]
