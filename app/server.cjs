@@ -363,9 +363,12 @@ app.get('/api/daily-reports', async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(100, Number.parseInt(req.query.limit, 10) || 30));
     const offset = Math.max(0, Number.parseInt(req.query.offset, 10) || 0);
+    const agentId = String(req.query.agentId || '').trim();
+    const whereClause = agentId ? `WHERE agent_id = '${esc(agentId)}'` : '';
     const rows = await dbQuery(`
       SELECT id, date, content, agent_id, created_at, updated_at
       FROM daily_reports
+      ${whereClause}
       ORDER BY date DESC
       LIMIT ${limit}
       OFFSET ${offset}

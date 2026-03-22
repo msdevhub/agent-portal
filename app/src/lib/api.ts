@@ -306,8 +306,8 @@ export const fetchProjects = async () => (await api<Project[]>('/projects')).map
 export const fetchProject = async (slug: string) => normalizeProject(await api<Project>(`/projects/${slug}`))
 export const fetchDashboard = async (at?: string) => normalizeDashboardData(await api<DashboardData>(`/dashboard${at ? `?at=${encodeURIComponent(at)}` : ''}`))
 export const fetchDashboardHistory = async (limit = 120) => api<{ points: string[]; botPoints?: string[]; serverPoints?: string[] }>(`/dashboard/history?limit=${limit}`)
-export const fetchDailyReports = (limit = 30, offset = 0) =>
-  api<DailyReport[]>(`/daily-reports?limit=${limit}&offset=${offset}`)
+export const fetchDailyReports = (limit = 30, offset = 0, agentId?: string) =>
+  api<DailyReport[]>(`/daily-reports?limit=${limit}&offset=${offset}${agentId ? `&agentId=${encodeURIComponent(agentId)}` : ''}`)
 export const fetchDailyReport = (date: string) =>
   api<DailyReport>(`/daily-reports/${encodeURIComponent(date)}`)
 export const createDailyReport = (data: { date: string; content: string; agentId?: string }) =>

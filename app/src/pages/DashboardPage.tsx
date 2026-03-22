@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   AlertTriangle,
   Box,
   ChevronDown,
   Cpu,
+  FileText,
   FlaskConical,
   Globe,
   HardDrive,
@@ -12,6 +13,7 @@ import {
   MessageSquare,
   Monitor,
   RefreshCw,
+  ScrollText,
   Server,
   Shield,
   Timer,
@@ -23,7 +25,12 @@ import { UserMenu } from "@/components/auth/UserMenu"
 import { CommandBar } from "@/components/portal/CommandBar"
 import type { CommandTarget } from "@/components/portal/CommandBar"
 import { Badge } from "@/components/ui/badge"
-import type { CronJob, DashboardAgent, DashboardData, Project, ServerSnapshot, Stats } from "@/lib/api"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
+
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { EmptyState } from "@/components/portal/shared"
+import { fetchDailyReports, type CronJob, type DailyReport, type DashboardAgent, type DashboardData, type Project, type ServerSnapshot, type Stats } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 /* ═══════════════════ Types ═══════════════════ */
@@ -50,7 +57,6 @@ interface DashboardPageProps {
   projectsLoading: boolean
   onCreateProject: () => void
   onOpenProject: (slug: string) => void
-  onOpenDailyReports: () => void
 }
 
 type TabId = "bots" | "servers" | "projects"
@@ -60,7 +66,7 @@ type TabId = "bots" | "servers" | "projects"
 export function DashboardPage({
   dashboard, loading, refreshing, historyPoints, historyBotPoints, historyServerPoints, selectedAsOf, onSelectAsOf,
   stats, projects, recentNotes, projectsLoading,
-  onCreateProject, onOpenProject, onOpenDailyReports,
+  onCreateProject, onOpenProject,
 }: DashboardPageProps) {
   const [activeTab, setActiveTab] = useState<TabId>("bots")
   const [selectedTargets, setSelectedTargets] = useState<CommandTarget[]>([])
@@ -103,15 +109,6 @@ export function DashboardPage({
       <div className="mb-5 flex flex-wrap items-center gap-2">
         <TabButton active={activeTab === "bots"} onClick={() => setActiveTab("bots")} icon={Workflow} label="Bot Fleet" count={agents.length} />
         <TabButton active={activeTab === "servers"} onClick={() => setActiveTab("servers")} icon={Server} label="Server Fleet" count={`${serverOnlineCount}/${servers.length}`} />
-        <button
-          type="button"
-          onClick={onOpenDailyReports}
-          className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium text-zinc-400 transition hover:bg-zinc-800/50 hover:text-zinc-200"
-        >
-          <ScrollText className="h-4 w-4 text-zinc-500" />
-          日报
-        </button>
-
         {/* Spacer */}
         <div className="flex-1" />
 
@@ -410,6 +407,8 @@ function BotCard({ agent, selected, onToggle, onOpenProject }: { agent: Dashboar
               </div>
             )}
 
+            <DailyReportsSection agentId={agent.id} />
+
             {/* Actions */}
             <div className="flex gap-2 pt-1">
                {hasProject ? (
@@ -443,6 +442,93 @@ function BotCard({ agent, selected, onToggle, onOpenProject }: { agent: Dashboar
 
     </>
   )
+}
+
+function DailyReportsSection({ agentId }: { agentId: string }) {
+  const [reports, setReports] = useState<DailyReport[]>([])
+  const [loading, setLoading] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [openReport, setOpenReport] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadReports = async () => {
+      setLoading(true)
+      try {
+        const nextReports = await fetchDailyReports(10, 0, agentId)
+        if (cancelled) return
+        const safeReports = nextReports ?? []
+        setReports(safeReports)
+        setOpenReport((current) => current ?? safeReports[0]?.date ?? null)
+      } catch {
+        if (!cancelled) {
+          setReports([])
+          setOpenReport(null)
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false)
+          setLoaded(true)
+        }
+      }
+    }
+
+    void loadReports()
+
+    return () => {
+      cancelled = true
+    }
+  }, [agentId])
+
+  return (
+    <div className="rounded-md border border-zinc-800/50 bg-[#18181b]">
+      <div className="flex items-center justify-between gap-2 px-2.5 py-2 text-xs">
+        <div className="inline-flex items-center gap-2 text-zinc-400">
+          <ScrollText className="h-3.5 w-3.5 text-zinc-500" />
+          <span>日报</span>
+        </div>
+        <span className="text-[10px] text-zinc-600">最近 10 条</span>
+      </div>
+
+      <div className="border-t border-zinc-800/50 px-2.5 py-2">
+        {loading && !loaded ? (
+          <div className="rounded-md bg-[#111113] px-3 py-4 text-xs text-zinc-500">加载中...</div>
+        ) : reports.length === 0 ? (
+          <EmptyState
+            compact
+            icon={<FileText className="h-4 w-4" />}
+            title="暂无日报"
+            message="这个 bot 还没有可展示的日报。"
+          />
+        ) : (
+          <Accordion value={openReport} onValueChange={setOpenReport} collapsible className="space-y-2">
+            {reports.map((report) => (
+              <AccordionItem key={report.id} value={report.date} className="rounded-md border-zinc-800/60 bg-[#111113]">
+                <AccordionTrigger className="px-3 py-2 hover:bg-zinc-900/30 sm:px-3 sm:py-2.5 sm:hover:bg-zinc-900/30">
+                  <div className="flex items-center justify-between gap-3 text-xs">
+                    <span className="font-medium text-zinc-200">{report.date}</span>
+                    <span className="rounded-full border border-zinc-800 bg-zinc-900/80 px-2 py-0.5 text-[10px] text-zinc-500">
+                      {report.agent_id || agentId}
+                    </span>
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent className="px-3 py-3 sm:px-3 sm:py-3">
+                  <div className="prose prose-invert prose-sm max-w-none prose-headings:text-zinc-100 prose-p:text-zinc-300 prose-p:leading-7 prose-a:text-cyan-300 prose-strong:text-zinc-100 prose-code:rounded prose-code:bg-zinc-800/50 prose-code:px-1.5 prose-code:py-0.5 prose-code:text-emerald-300 prose-pre:border prose-pre:border-zinc-800/60 prose-pre:bg-[#09090b] prose-li:text-zinc-300 prose-th:text-zinc-200 prose-td:text-zinc-300 prose-hr:border-zinc-800">
+                    <MarkdownBlock content={report.content} />
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function MarkdownBlock({ content }: { content: string }) {
+  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
 }
 
 function EnvCell({ icon: Icon, label, status }: {

@@ -11,16 +11,13 @@ import {
   fetchArtifacts,
   fetchDashboard,
   fetchDashboardHistory,
-  fetchDailyReport,
-  fetchDailyReports,
   fetchProject,
   fetchProjects,
   fetchStats,
   fetchTimeline,
   initDB,
 } from "@/lib/api"
-import type { DailyReport, DashboardData, Project, Stats } from "@/lib/api"
-import { DailyReportsPage } from "@/pages/DailyReportsPage"
+import type { DashboardData, Project, Stats } from "@/lib/api"
 import { DashboardPage } from "@/pages/DashboardPage"
 import { ProjectDetailPage } from "@/pages/ProjectDetailPage"
 
@@ -55,11 +52,7 @@ function App() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [dailyReports, setDailyReports] = useState<DailyReport[]>([])
-  const [dailyReportsLoading, setDailyReportsLoading] = useState(false)
-  const [selectedDailyReport, setSelectedDailyReport] = useState<DailyReport | null>(null)
   const detailRequestId = useRef(0)
-  const dailyReportRequestId = useRef(0)
 
   const showError = useCallback((error: unknown) => {
     setErrorMessage(getErrorMessage(error))
@@ -142,40 +135,6 @@ function App() {
     await Promise.all([loadOverview(), loadProjectDetail(slug)])
   }, [loadOverview, loadProjectDetail])
 
-  const loadDailyReports = useCallback(async (selectedDate?: string) => {
-    setDailyReportsLoading(true)
-    const requestId = ++dailyReportRequestId.current
-    try {
-      const reports = await fetchDailyReports(30, 0)
-      if (requestId !== dailyReportRequestId.current) return
-      setDailyReports(reports ?? [])
-
-      const preferredDate = selectedDate || reports[0]?.date || null
-      if (!preferredDate) {
-        setSelectedDailyReport(null)
-        return
-      }
-
-      const existing = (reports ?? []).find((report) => report.date === preferredDate)
-      if (existing) {
-        setSelectedDailyReport(existing)
-      }
-
-      const fullReport = await fetchDailyReport(preferredDate)
-      if (requestId !== dailyReportRequestId.current) return
-      setSelectedDailyReport(fullReport)
-    } catch (error) {
-      if (requestId === dailyReportRequestId.current) {
-        setSelectedDailyReport(null)
-      }
-      showError(error)
-    } finally {
-      if (requestId === dailyReportRequestId.current) {
-        setDailyReportsLoading(false)
-      }
-    }
-  }, [showError])
-
   // Init DB + load overview
   useEffect(() => {
     void (async () => {
@@ -208,17 +167,10 @@ function App() {
       void loadProjectDetail(route.slug)
       return
     }
-    if (route.page === "daily-reports") {
-      void loadDailyReports(route.date)
-      return
-    }
     detailRequestId.current += 1
-    dailyReportRequestId.current += 1
     setDetailLoading(false)
     setDetailProject(null)
-    setDailyReportsLoading(false)
-    setSelectedDailyReport(null)
-  }, [loadDailyReports, loadProjectDetail, route])
+  }, [loadProjectDetail, route])
 
   const recentNotes = useMemo(() => (
     projects
@@ -250,7 +202,6 @@ function App() {
             projectsLoading={overviewLoading}
             onCreateProject={() => setShowCreate(true)}
             onOpenProject={(slug) => navigateToRoute({ page: "project", slug })}
-            onOpenDailyReports={() => navigateToRoute({ page: "daily-reports" })}
           />
         )}
         {route.page === "project" && (
@@ -260,15 +211,6 @@ function App() {
             onBack={() => navigateToRoute({ page: "home" })}
             onRefresh={refreshProject}
             onError={showError}
-          />
-        )}
-        {route.page === "daily-reports" && (
-          <DailyReportsPage
-            reports={dailyReports}
-            selectedReport={selectedDailyReport}
-            loading={dailyReportsLoading}
-            onBack={() => navigateToRoute({ page: "home" })}
-            onSelectDate={(date) => navigateToRoute({ page: "daily-reports", date })}
           />
         )}
       </div>

@@ -34,7 +34,7 @@ import type { Artifact, Project, Stats, TimelineEvent, WorkspaceFile } from "@/l
 import { STATUS_LABELS, STAGES, getArtifactTypeLabel, getStageIndex, getStageLabel } from "@/lib/constants"
 import { cn } from "@/lib/utils"
 
-export type Route = { page: "home" } | { page: "projects" } | { page: "project"; slug: string } | { page: "daily-reports"; date?: string }
+export type Route = { page: "home" } | { page: "projects" } | { page: "project"; slug: string }
 export type MarkdownSource = { type: "workspace" } | { type: "doc"; slug: string }
 
 export interface MarkdownPreviewTarget {
@@ -606,7 +606,6 @@ export function navigateToRoute(route: Route) {
   let nextHash: string
   if (route.page === "home") nextHash = "#/"
   else if (route.page === "projects") nextHash = "#/projects"
-  else if (route.page === "daily-reports") nextHash = route.date ? `#/daily-reports/${encodeURIComponent(route.date)}` : "#/daily-reports"
   else nextHash = `#/project/${encodeURIComponent(route.slug)}`
   if (window.location.hash === nextHash) return
   window.location.hash = nextHash
@@ -616,13 +615,6 @@ function parseHashRoute(hash: string): Route {
   const normalized = hash.replace(/^#/, "") || "/"
   if (normalized === "/" || normalized === "") return { page: "home" }
   if (normalized === "/projects") return { page: "projects" }
-  if (normalized === "/daily-reports") return { page: "daily-reports" }
-
-  const dailyReportMatch = normalized.match(/^\/daily-reports\/(.+)$/)
-  if (dailyReportMatch) {
-    return { page: "daily-reports", date: decodeURIComponent(dailyReportMatch[1]) }
-  }
-
   const match = normalized.match(/^\/project\/(.+)$/)
   if (match) {
     return { page: "project", slug: decodeURIComponent(match[1]) }
