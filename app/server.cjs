@@ -251,6 +251,23 @@ app.post('/api/init-db', async (req, res) => {
     await dbExec(`CREATE INDEX IF NOT EXISTS "AP_timeline_project_id_idx" ON "AP_timeline"(project_id, created_at);`);
     await dbExec(`CREATE INDEX IF NOT EXISTS "AP_daily_reports_date_idx" ON "AP_daily_reports"(date DESC);`);
 
+    // Timeline: granular L1 events per bot per day (distinct from L1.5 aggregated tasks in AP_daily_activities)
+    await dbExec(`
+      CREATE TABLE IF NOT EXISTS "AP_daily_timeline" (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id TEXT NOT NULL,
+        date DATE NOT NULL,
+        time TEXT,
+        who TEXT,
+        action TEXT,
+        content TEXT,
+        status TEXT,
+        deliverables JSONB DEFAULT '[]'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+    await dbExec(`CREATE INDEX IF NOT EXISTS idx_daily_timeline_agent_date ON "AP_daily_timeline" (agent_id, date);`);
+
     res.json({ ok: true, message: 'Tables created' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -485,6 +502,23 @@ app.get('/api/daily-activities/dates', async (req, res) => {
     if (!agentId) return res.json([]);
     const rows = await dbQuery(`SELECT DISTINCT date FROM "AP_daily_activities" WHERE agent_id = '${esc(agentId)}' ORDER BY date DESC LIMIT 30`);
     res.json((rows ?? []).map(r => r.date));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Daily Timeline: granular L1 events per bot ──
+app.get('/api/daily-timeline', async (req, res) => {
+  try {
+    const agentId = req.query.agent_id;
+    if (!agentId) return res.json([]);
+    const date = req.query.date;
+    let dateFilter = '';
+    if (date) {
+      dateFilter = `AND date = '${esc(date)}'`;
+    }
+    const rows = await dbQuery(`SELECT * FROM "AP_daily_timeline" WHERE agent_id = '${esc(agentId)}' ${dateFilter} ORDER BY time ASC`);
+    res.json(rows ?? []);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
