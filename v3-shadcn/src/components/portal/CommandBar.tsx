@@ -18,7 +18,7 @@ interface CommandBarProps {
   onClearTarget: (id?: string) => void
 }
 
-const PORTAL_OPS_USER_ID = "n9izn6p15fboubx5reri5ftx6w"
+const PORTAL_SENDER_USER_ID = "8zzs18ha4fdhf8jt8ybm61eqdw" // @dora (admin token sends as this user)
 
 type ChatState = {
   channelId: string | null
@@ -201,7 +201,7 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
       const sentPost: OpsPost = {
         id: result.post_id ?? `local-${Date.now()}`,
         channel_id: chId ?? "",
-        user_id: PORTAL_OPS_USER_ID,
+        user_id: PORTAL_SENDER_USER_ID,
         message: finalMsg,
         create_at: Date.now(),
         update_at: Date.now(),
@@ -327,7 +327,7 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
               )}
 
               {messages.map((post) => {
-                const isSelf = post.user_id === PORTAL_OPS_USER_ID
+                const isSelf = post.user_id === PORTAL_SENDER_USER_ID
                 const { ref, body } = parseRef(post.message ?? "")
                 
                 return (

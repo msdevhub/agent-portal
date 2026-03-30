@@ -8,10 +8,54 @@ const MIME_TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'imag
 const SUPABASE_URL = 'https://db.dora.restry.cn';
 const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJzZXJ2aWNlX3JvbGUiLAogICAgImlzcyI6ICJzdXBhYmFzZS1kZW1vIiwKICAgICJpYXQiOiAxNjQxNzY5MjAwLAogICAgImV4cCI6IDE3OTk1MzU2MDAKfQ.DaYlNEoUrrEn2Ig7tqibS-PHK5vgusbcbo7X36XVt4Q';
 
-// ── Portal Ops Bot (Mattermost DM) ──
+// ── Portal Ops: Mattermost DM (use Admin token to send as @dora) ──
 const PORTAL_OPS_TOKEN = process.env.PORTAL_OPS_TOKEN || 'w5fcix3aciynxqypp1rdzswtyh';
 const PORTAL_OPS_USER_ID = 'n9izn6p15fboubx5reri5ftx6w';
+const MM_ADMIN_TOKEN = process.env.MM_ADMIN_TOKEN || 'ygw5qt86hi8p3r917j7khe3ogc';
+const MM_ADMIN_USER_ID = '8zzs18ha4fdhf8jt8ybm61eqdw'; // @dora
 const MM_BASE_URL = process.env.MM_BASE_URL || 'https://mm.dora.restry.cn';
+
+// Cache of MM bot users: agent_id (from daily_reports) -> { id: mm_user_id, nickname }
+// Maps using the pusher's resolve_agent_id logic: ottor-pc-cloud-bot -> rabbit, etc.
+const mmBotUserCache = {};
+
+async function loadMmBotUsers() {
+  try {
+    const res = await fetch(`${MM_BASE_URL}/api/v4/users?per_page=200`, {
+      headers: { Authorization: `Bearer ${MM_ADMIN_TOKEN}` },
+    });
+    if (!res.ok) { console.error('[MM] Failed to load bot users:', res.status); return; }
+    const users = await res.json();
+    const bots = users.filter(u => u.is_bot);
+    // Index by username (matches mm_username in daily_reports collector)
+    for (const b of bots) {
+      mmBotUserCache[b.username] = { id: b.id, nickname: b.nickname || b.username };
+    }
+    // Also index by agent_id (which might differ from username due to resolve_agent_id mapping)
+    // Known mappings from pusher.py
+    const AGENT_ID_MAP = {
+      'rabbit': 'ottor-pc-cloud-bot',
+      'clawline-channel': 'channelbot',
+      'clawline-client-web': 'webbot',
+      'clawline-gateway': 'gatewaybot',
+      'research': 'researcher',
+      'research-craft': 'craftbot',
+      'research-portal': 'portalbot',
+      'research-bi': 'bibot',
+    };
+    for (const [agentId, mmUsername] of Object.entries(AGENT_ID_MAP)) {
+      if (mmBotUserCache[mmUsername] && !mmBotUserCache[agentId]) {
+        mmBotUserCache[agentId] = mmBotUserCache[mmUsername];
+      }
+    }
+    console.log(`[MM] Loaded ${Object.keys(mmBotUserCache).length} bot user entries`);
+  } catch (e) {
+    console.error('[MM] Error loading bot users:', e.message);
+  }
+}
+
+// Load bot users at startup
+loadMmBotUsers();
 
 const STAGE_LABELS = {
   idea: '想法',
@@ -284,12 +328,13 @@ app.get('/api/dashboard', async (req, res) => {
     const at = req.query.at ? String(req.query.at) : null;
     const timeFilter = at ? `WHERE snapshot_time <= '${esc(at)}'` : '';
 
-    const [sites, containers, crons, agents, servers] = await Promise.all([
+    const [sites, containers, crons, agents, servers, reportBots] = await Promise.all([
       dbQuery(`SELECT DISTINCT ON (name, kind) * FROM "AP_site_checks" ${timeFilter} ORDER BY name, kind, snapshot_time DESC`),
       dbQuery(`SELECT DISTINCT ON (name) * FROM "AP_container_checks" ${timeFilter} ORDER BY name, snapshot_time DESC`),
       dbQuery(`SELECT DISTINCT ON (job_id) * FROM "AP_cron_checks" ${timeFilter} ORDER BY job_id, snapshot_time DESC`),
       dbQuery(`SELECT DISTINCT ON (agent_id) * FROM "AP_agent_checks" ${timeFilter} ORDER BY agent_id, snapshot_time DESC`),
       getLatestServerSnapshots(at),
+      dbQuery(`SELECT DISTINCT agent_id FROM "daily_reports" ORDER BY agent_id`),
     ]);
 
     const productionSites = (sites ?? []).filter(s => s.kind === 'production').map(s => ({
@@ -315,6 +360,32 @@ app.get('/api/dashboard', async (req, res) => {
       crons: { total: a.cron_total, ok: a.cron_ok, error: a.cron_error, jobs: a.cron_jobs ?? [] },
       tasks: { pending: a.tasks_pending, done: a.tasks_done, total: a.tasks_total },
     }));
+
+    // Merge bots from daily_reports that aren't in AP_agent_checks
+    const agentIds = new Set(agentList.map(a => a.id));
+    if (reportBots && reportBots.length > 0) {
+      for (const rb of reportBots) {
+        if (!agentIds.has(rb.agent_id)) {
+          // Fetch mm_user_id from cache (populated at startup)
+          const mmInfo = mmBotUserCache[rb.agent_id];
+          agentList.push({
+            id: rb.agent_id,
+            name: mmInfo?.nickname || rb.agent_id,
+            emoji: '🤖',
+            role: 'bot',
+            project: null,
+            github: null,
+            mm_user_id: mmInfo?.id || null,
+            production: null,
+            dev: null,
+            container: null,
+            crons: null,
+            tasks: null,
+          });
+          agentIds.add(rb.agent_id);
+        }
+      }
+    }
 
     const prodUp = productionSites.filter(s => s.status === 200).length;
     const devUp = devServers.filter(s => s.status === 200).length;
@@ -1065,7 +1136,7 @@ app.post('/api/sync-workspace', async (req, res) => {
   }
 });
 
-// ── Portal Ops: Send DM via portalops bot ──
+// ── Portal Ops: Send DM as @dora via admin token ──
 app.post('/api/ops/send', async (req, res) => {
   try {
     const { target_user_id, message } = req.body || {};
@@ -1073,14 +1144,14 @@ app.post('/api/ops/send', async (req, res) => {
       return res.status(400).json({ error: '缺少 target_user_id 或 message' });
     }
 
-    // 1. Create / get DM channel between portalops and target
+    // 1. Create / get DM channel between @dora and target
     const channelRes = await fetch(`${MM_BASE_URL}/api/v4/channels/direct`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${PORTAL_OPS_TOKEN}`,
+        Authorization: `Bearer ${MM_ADMIN_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify([PORTAL_OPS_USER_ID, target_user_id]),
+      body: JSON.stringify([MM_ADMIN_USER_ID, target_user_id]),
     });
     if (!channelRes.ok) {
       const err = await channelRes.text();
@@ -1088,11 +1159,11 @@ app.post('/api/ops/send', async (req, res) => {
     }
     const channel = await channelRes.json();
 
-    // 2. Post message
+    // 2. Post message as @dora
     const postRes = await fetch(`${MM_BASE_URL}/api/v4/posts`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${PORTAL_OPS_TOKEN}`,
+        Authorization: `Bearer ${MM_ADMIN_TOKEN}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -1114,7 +1185,7 @@ app.post('/api/ops/send', async (req, res) => {
   }
 });
 
-// ── Portal Ops: Get/create DM channel between portalops and target ──
+// ── Portal Ops: Get/create DM channel between @dora and target ──
 app.get('/api/ops/channel', async (req, res) => {
   try {
     const { target_user_id } = req.query;
@@ -1124,10 +1195,10 @@ app.get('/api/ops/channel', async (req, res) => {
     const channelRes = await fetch(`${MM_BASE_URL}/api/v4/channels/direct`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${PORTAL_OPS_TOKEN}`,
+        Authorization: `Bearer ${MM_ADMIN_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify([PORTAL_OPS_USER_ID, target_user_id]),
+      body: JSON.stringify([MM_ADMIN_USER_ID, target_user_id]),
     });
     if (!channelRes.ok) {
       const err = await channelRes.text();
@@ -1158,7 +1229,7 @@ app.get('/api/ops/messages', async (req, res) => {
     }
 
     const postsRes = await fetch(url, {
-      headers: { Authorization: `Bearer ${PORTAL_OPS_TOKEN}` },
+      headers: { Authorization: `Bearer ${MM_ADMIN_TOKEN}` },
     });
     if (!postsRes.ok) {
       const err = await postsRes.text();
@@ -1245,7 +1316,7 @@ function connectMmWebSocket() {
     mmWsAlive = true;
 
     // Authenticate
-    const authMsg = JSON.stringify({ seq: mmWsSeq++, action: 'authentication_challenge', data: { token: PORTAL_OPS_TOKEN } });
+    const authMsg = JSON.stringify({ seq: mmWsSeq++, action: 'authentication_challenge', data: { token: MM_ADMIN_TOKEN } });
     sendWsFrame(socket, authMsg);
 
     let buffer = Buffer.alloc(0);
@@ -1310,8 +1381,8 @@ function handleMmEvent(text) {
     if (evt.event === 'posted') {
       const post = JSON.parse(evt.data?.post ?? '{}');
       const channelId = post.channel_id;
-      // Only forward posts from tracked channels and NOT from portalops itself
-      if (channelId && trackedChannels.has(channelId) && post.user_id !== PORTAL_OPS_USER_ID) {
+      // Only forward posts from tracked channels and NOT from @dora (portal sender)
+      if (channelId && trackedChannels.has(channelId) && post.user_id !== MM_ADMIN_USER_ID) {
         broadcastSSE('new_message', {
           id: post.id,
           channel_id: channelId,
