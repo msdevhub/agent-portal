@@ -362,6 +362,8 @@ export interface DailyInsights {
 }
 export const fetchDailyInsights = (date?: string) =>
   api<DailyInsights | null>(`/insights${date ? `?date=${encodeURIComponent(date)}` : ''}`)
+export const fetchInsightDates = () =>
+  api<string[]>('/insights/dates')
 
 // ── Bot Real-time Status ──
 export interface BotStatusEntry {
@@ -374,6 +376,12 @@ export interface BotStatusEntry {
   lastMessage: string
 }
 export const fetchBotStatuses = () => api<BotStatusEntry[]>('/bots/status')
+
+// ── Bot Reports & Activities (new endpoints) ──
+export const fetchBotReport = (agentId: string, date?: string) =>
+  api<{ content: string; date: string } | null>(`/reports/${encodeURIComponent(agentId)}${date ? `?date=${encodeURIComponent(date)}` : ''}`)
+export const fetchBotActivities = (agentId: string, date?: string) =>
+  api<DailyActivity[]>(`/activities/${encodeURIComponent(agentId)}${date ? `?date=${encodeURIComponent(date)}` : ''}`)
 
 // ── Daily Activities ──
 export interface DailyActivity {

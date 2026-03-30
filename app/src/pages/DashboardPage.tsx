@@ -7,6 +7,8 @@ import {
   Box,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Cpu,
   FileText,
@@ -34,7 +36,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
 import { EmptyState } from "@/components/portal/shared"
-import { fetchDailyInsights, sendNbaMessage, fetchBotStatuses, type BotStatusEntry, type CronJob, type DailyInsights, type InsightsBotSummary, type ThingDone, type NeedAttention, type DashboardAgent, type DashboardData, type Project, type ServerSnapshot, type Stats } from "@/lib/api"
+import { fetchDailyInsights, fetchInsightDates, sendNbaMessage, fetchBotStatuses, type BotStatusEntry, type CronJob, type DailyInsights, type InsightsBotSummary, type ThingDone, type NeedAttention, type DashboardAgent, type DashboardData, type Project, type ServerSnapshot, type Stats } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 /* ═══════════════════ Types ═══════════════════ */
@@ -87,7 +89,7 @@ interface DashboardPageProps {
   projectsLoading: boolean
   onCreateProject: () => void
   onOpenProject: (slug: string) => void
-  onOpenBot: (agentId: string) => void
+  onOpenBot: (agentId: string, date?: string) => void
 }
 
 type TabId = "bots" | "servers" | "projects"
@@ -102,6 +104,8 @@ export function DashboardPage({
   const [activeTab, setActiveTab] = useState<TabId>("bots")
   const [selectedTargets, setSelectedTargets] = useState<CommandTarget[]>([])
   const [insights, setInsights] = useState<DailyInsights | null>(null)
+  const [insightDates, setInsightDates] = useState<string[]>([])
+  const [selectedInsightDate, setSelectedInsightDate] = useState<string | null>(null)
   const [botStatuses, setBotStatuses] = useState<Record<string, BotStatusEntry>>({})
 
   const summary = dashboard.summary ?? {}
@@ -111,11 +115,20 @@ export function DashboardPage({
   const agents = dashboard.agents ?? []
   const serverOnlineCount = servers.filter((s) => s.ssh_reachable).length
 
-  // Fetch daily insights
+  // Fetch insight dates on mount
   useEffect(() => {
-    const date = selectedAsOf ? selectedAsOf.slice(0, 10) : undefined
-    fetchDailyInsights(date).then(d => setInsights(d)).catch(() => {})
-  }, [selectedAsOf])
+    fetchInsightDates().then(dates => {
+      const sorted = (dates ?? []).sort((a, b) => b.localeCompare(a))
+      setInsightDates(sorted)
+      if (sorted.length > 0 && !selectedInsightDate) setSelectedInsightDate(sorted[0])
+    }).catch(() => {})
+  }, [])
+
+  // Fetch daily insights when selected date changes
+  useEffect(() => {
+    if (!selectedInsightDate) return
+    fetchDailyInsights(selectedInsightDate).then(d => setInsights(d)).catch(() => {})
+  }, [selectedInsightDate])
 
   // Fetch initial bot statuses + listen to SSE for real-time updates
   useEffect(() => {
@@ -197,24 +210,31 @@ export function DashboardPage({
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Inline Time Machine */}
-        <InlineTimeMachine
-          points={historyPoints}
-          botPoints={historyBotPoints}
-          serverPoints={historyServerPoints}
-          historySummaries={historySummaries}
-          value={selectedAsOf}
-          latestLabel={asOf}
-          onChange={onSelectAsOf}
-          agents={agents}
-          servers={servers}
-        />
+        {/* Inline Time Machine — only visible for Server Fleet tab */}
+        {activeTab === "servers" && (
+          <InlineTimeMachine
+            points={historyPoints}
+            botPoints={historyBotPoints}
+            serverPoints={historyServerPoints}
+            historySummaries={historySummaries}
+            value={selectedAsOf}
+            latestLabel={asOf}
+            onChange={onSelectAsOf}
+            agents={agents}
+            servers={servers}
+          />
+        )}
       </div>
 
       {/* Tab Content */}
       <div className="min-h-[400px]">
         {/* Daily Insights Card (above tab content) */}
-        <DailyInsightsCard insights={insights} />
+        <DailyInsightsCard
+          insights={insights}
+          dates={insightDates}
+          selectedDate={selectedInsightDate}
+          onSelectDate={setSelectedInsightDate}
+        />
 
         {activeTab === "bots" && (
           <BotFleetTab
@@ -227,6 +247,7 @@ export function DashboardPage({
             botSummaryMap={botSummaryMap}
             botSummaries={insights?.bot_summaries}
             botStatuses={botStatuses}
+            insightDate={selectedInsightDate}
           />
         )}
         {activeTab === "servers" && (
@@ -598,17 +619,22 @@ const SEVERITY_COLORS: Record<string, string> = {
   medium: "bg-amber-500/10 text-amber-400 border-amber-500/20",
 }
 
-function DailyInsightsCard({ insights: data }: { insights: DailyInsights | null }) {
+function DailyInsightsCard({ insights: data, dates, selectedDate, onSelectDate }: { insights: DailyInsights | null; dates: string[]; selectedDate: string | null; onSelectDate: (d: string) => void }) {
   const [collapsed, setCollapsed] = useState(false)
   const [thingsOpen, setThingsOpen] = useState(false)
   const [expandedThing, setExpandedThing] = useState<number | null>(null)
   const [nbaSending, setNbaSending] = useState<Record<number, boolean>>({})
   const [nbaSent, setNbaSent] = useState<Record<number, boolean>>({})
 
-  if (!data) return null
+  if (!data && dates.length === 0) return null
 
-  const { things_done, needs_attention, stats } = data
+  const { things_done, needs_attention, stats } = data ?? {}
   const focusItems = things_done?.filter(t => t.is_focus) ?? []
+
+  // Date navigation helpers
+  const dateIdx = selectedDate ? dates.indexOf(selectedDate) : 0
+  const canPrev = dateIdx < dates.length - 1
+  const canNext = dateIdx > 0
 
   const handleNba = async (idx: number, nba: NeedAttention["nba"]) => {
     if (!nba || nbaSending[idx] || nbaSent[idx]) return
@@ -637,11 +663,50 @@ function DailyInsightsCard({ insights: data }: { insights: DailyInsights | null 
             </div>
             <div className="text-left">
               <div className="text-sm font-semibold text-zinc-100">每日洞察</div>
-              <div className="text-[11px] text-zinc-500">{data.date}</div>
             </div>
           </div>
           <ChevronDown className={cn("h-4 w-4 text-zinc-500 transition-transform", !collapsed && "rotate-180")} />
         </button>
+
+        {/* Date picker row */}
+        {dates.length > 0 && (
+          <div className="flex items-center gap-2 border-t border-zinc-800/40 px-4 py-2">
+            <button
+              type="button"
+              disabled={!canPrev}
+              onClick={() => canPrev && onSelectDate(dates[dateIdx + 1])}
+              className="rounded-md p-1 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <select
+              value={selectedDate ?? ""}
+              onChange={(e) => onSelectDate(e.target.value)}
+              className="flex-1 appearance-none rounded-md bg-[#18181b] border border-zinc-800 px-2.5 py-1 text-xs text-zinc-200 font-mono text-center cursor-pointer hover:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-emerald-500/40 transition-colors"
+            >
+              {dates.map(d => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={!canNext}
+              onClick={() => canNext && onSelectDate(dates[dateIdx - 1])}
+              className="rounded-md p-1 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            {dateIdx !== 0 && (
+              <button
+                type="button"
+                onClick={() => onSelectDate(dates[0])}
+                className="text-[10px] text-emerald-400 hover:text-emerald-300 whitespace-nowrap transition-colors"
+              >
+                最新
+              </button>
+            )}
+          </div>
+        )}
 
         {!collapsed && (
           <div className="border-t border-zinc-800/40 px-4 py-3 space-y-4">
@@ -857,8 +922,8 @@ function useArchivedBots() {
 
 /* ═══════════════════ Bot Fleet Tab ═══════════════════ */
 
-function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOpenProject, onOpenBot, botSummaryMap, botSummaries, botStatuses }: {
-  dashboard: DashboardData; loading: boolean; selectedTargets: CommandTarget[]; onToggleTarget: (t: CommandTarget) => void; onOpenProject: (slug: string) => void; onOpenBot: (agentId: string) => void; botSummaryMap: Record<string, BotSummary>; botSummaries?: BotSummary[]; botStatuses: Record<string, BotStatusEntry>
+function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOpenProject, onOpenBot, botSummaryMap, botSummaries, botStatuses, insightDate }: {
+  dashboard: DashboardData; loading: boolean; selectedTargets: CommandTarget[]; onToggleTarget: (t: CommandTarget) => void; onOpenProject: (slug: string) => void; onOpenBot: (agentId: string, date?: string) => void; botSummaryMap: Record<string, BotSummary>; botSummaries?: BotSummary[]; botStatuses: Record<string, BotStatusEntry>; insightDate: string | null
 }) {
   const agents = dashboard.agents ?? []
   const { archived, toggleArchive } = useArchivedBots()
@@ -933,6 +998,7 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
                 virtualEmoji={(agent as any)._emoji}
                 forceExpanded={allExpanded}
                 liveStatus={botStatuses[agent.id]}
+                insightDate={insightDate}
               />
             ))}
           </div>
@@ -966,6 +1032,7 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
                       virtualEmoji={(agent as any)._emoji}
                       forceExpanded={allExpanded}
                       liveStatus={botStatuses[agent.id]}
+                      insightDate={insightDate}
                     />
                   ))}
                 </div>
@@ -978,7 +1045,7 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
   )
 }
 
-function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchive, isArchived, botSummary, isVirtual, virtualEmoji, forceExpanded, liveStatus }: { agent: DashboardAgent; selected: boolean; onToggle: () => void; onOpenProject: (slug: string) => void; onOpenBot: (agentId: string) => void; onArchive: () => void; isArchived: boolean; botSummary?: BotSummary; isVirtual?: boolean; virtualEmoji?: string; forceExpanded?: boolean; liveStatus?: BotStatusEntry }) {
+function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchive, isArchived, botSummary, isVirtual, virtualEmoji, forceExpanded, liveStatus, insightDate }: { agent: DashboardAgent; selected: boolean; onToggle: () => void; onOpenProject: (slug: string) => void; onOpenBot: (agentId: string, date?: string) => void; onArchive: () => void; isArchived: boolean; botSummary?: BotSummary; isVirtual?: boolean; virtualEmoji?: string; forceExpanded?: boolean; liveStatus?: BotStatusEntry; insightDate?: string | null }) {
   const expanded = forceExpanded ?? false
   const [cronOpen, setCronOpen] = useState(false)
   
@@ -1147,7 +1214,7 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchiv
             {/* Actions */}
             <div className="flex gap-2 pt-1">
                <button 
-                 onClick={(e) => { e.stopPropagation(); onOpenBot(agent.id) }}
+                 onClick={(e) => { e.stopPropagation(); onOpenBot(agent.id, insightDate ?? undefined) }}
                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 py-1.5 text-xs font-semibold text-white transition-colors"
                >
                  <FileText className="h-3.5 w-3.5" />

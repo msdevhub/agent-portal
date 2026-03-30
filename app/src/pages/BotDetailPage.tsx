@@ -66,12 +66,13 @@ interface BotDetailPageProps {
   mmUsername: string
   isVirtual?: boolean
   virtualEmoji?: string
+  initialDate?: string
 }
 
-export function BotDetailPage({ agent, agentId, botSummary, onBack, mmUsername, isVirtual, virtualEmoji }: BotDetailPageProps) {
+export function BotDetailPage({ agent, agentId, botSummary, onBack, mmUsername, isVirtual, virtualEmoji, initialDate }: BotDetailPageProps) {
   const [activities, setActivities] = useState<DailyActivity[]>([])
   const [dates, setDates] = useState<string[]>([])
-  const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [selectedDate, setSelectedDate] = useState<string | null>(initialDate ?? null)
   const [activitiesLoading, setActivitiesLoading] = useState(true)
   const [reports, setReports] = useState<DailyReport[]>([])
   const [reportsLoading, setReportsLoading] = useState(true)
@@ -87,7 +88,10 @@ export function BotDetailPage({ agent, agentId, botSummary, onBack, mmUsername, 
       .then(d => {
         const sorted = (d ?? []).sort((a, b) => b.localeCompare(a))
         setDates(sorted)
-        if (sorted.length > 0 && !selectedDate) setSelectedDate(sorted[0])
+        // Only auto-select first date if no initialDate and no current selection
+        if (sorted.length > 0 && !selectedDate) {
+          setSelectedDate(initialDate && sorted.includes(initialDate) ? initialDate : sorted[0])
+        }
       })
       .catch(() => setDates([]))
   }, [agentId])

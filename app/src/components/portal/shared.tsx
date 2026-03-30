@@ -34,7 +34,7 @@ import type { Artifact, Project, Stats, TimelineEvent, WorkspaceFile } from "@/l
 import { STATUS_LABELS, STAGES, getArtifactTypeLabel, getStageIndex, getStageLabel } from "@/lib/constants"
 import { cn } from "@/lib/utils"
 
-export type Route = { page: "home" } | { page: "projects" } | { page: "project"; slug: string } | { page: "bot"; agentId: string }
+export type Route = { page: "home" } | { page: "projects" } | { page: "project"; slug: string } | { page: "bot"; agentId: string; date?: string }
 export type MarkdownSource = { type: "workspace" } | { type: "doc"; slug: string }
 
 export interface MarkdownPreviewTarget {
@@ -606,7 +606,11 @@ export function navigateToRoute(route: Route) {
   let nextHash: string
   if (route.page === "home") nextHash = "#/"
   else if (route.page === "projects") nextHash = "#/projects"
-  else if (route.page === "bot") nextHash = `#/bot/${encodeURIComponent(route.agentId)}`
+  else if (route.page === "bot") {
+    let hash = `#/bot/${encodeURIComponent(route.agentId)}`
+    if (route.date) hash += `?date=${encodeURIComponent(route.date)}`
+    nextHash = hash
+  }
   else nextHash = `#/project/${encodeURIComponent(route.slug)}`
   if (window.location.hash === nextHash) return
   window.location.hash = nextHash
@@ -620,9 +624,12 @@ function parseHashRoute(hash: string): Route {
   if (match) {
     return { page: "project", slug: decodeURIComponent(match[1]) }
   }
-  const botMatch = normalized.match(/^\/bot\/(.+)$/)
+  const botMatch = normalized.match(/^\/bot\/([^?]+)/)
   if (botMatch) {
-    return { page: "bot", agentId: decodeURIComponent(botMatch[1]) }
+    const agentId = decodeURIComponent(botMatch[1])
+    const qsMatch = normalized.match(/[?&]date=([^&]+)/)
+    const date = qsMatch ? decodeURIComponent(qsMatch[1]) : undefined
+    return { page: "bot", agentId, date }
   }
 
   return { page: "home" }

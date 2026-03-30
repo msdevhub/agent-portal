@@ -207,7 +207,7 @@ function App() {
             projectsLoading={overviewLoading}
             onCreateProject={() => setShowCreate(true)}
             onOpenProject={(slug) => navigateToRoute({ page: "project", slug })}
-            onOpenBot={(agentId) => navigateToRoute({ page: "bot", agentId })}
+            onOpenBot={(agentId, date) => navigateToRoute({ page: "bot", agentId, date })}
           />
         )}
         {route.page === "bot" && (
@@ -216,6 +216,7 @@ function App() {
             agentId={route.agentId}
             onBack={() => navigateToRoute({ page: "home" })}
             mmUsername={AGENT_ID_TO_MM[route.agentId] ?? route.agentId}
+            initialDate={route.date}
           />
         )}
         {route.page === "project" && (
