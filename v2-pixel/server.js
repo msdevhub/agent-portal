@@ -287,6 +287,78 @@ app.get('/api/servers', async (req, res) => {
   }
 });
 
+// ── Daily Insights API ──
+app.get('/api/insights', async (req, res) => {
+  try {
+    const date = req.query.date; // optional: YYYY-MM-DD
+    let sql;
+    if (date) {
+      sql = `SELECT * FROM "AP_daily_insights" WHERE date = '${esc(date)}' LIMIT 1`;
+    } else {
+      sql = `SELECT * FROM "AP_daily_insights" ORDER BY date DESC LIMIT 1`;
+    }
+    const rows = await dbQuery(sql);
+    if (!rows || rows.length === 0) {
+      return res.json({ things_done: [], needs_attention: [], bot_summaries: [], date: date || null });
+    }
+    const row = rows[0];
+    res.json({
+      date: row.date,
+      things_done: row.things_done ?? [],
+      needs_attention: row.needs_attention ?? [],
+      bot_summaries: row.bot_summaries ?? [],
+      metadata: row.metadata ?? {},
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Daily Insights dates (for time switcher) ──
+app.get('/api/insights/dates', async (req, res) => {
+  try {
+    const rows = await dbQuery(`SELECT date FROM "AP_daily_insights" ORDER BY date DESC LIMIT 30`);
+    res.json((rows ?? []).map(r => r.date));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Daily Report for a specific bot ──
+app.get('/api/reports/:agentId', async (req, res) => {
+  try {
+    const date = req.query.date;
+    let sql;
+    if (date) {
+      sql = `SELECT * FROM "AP_daily_reports" WHERE agent_id = '${esc(req.params.agentId)}' AND date = '${esc(date)}' LIMIT 1`;
+    } else {
+      sql = `SELECT * FROM "AP_daily_reports" WHERE agent_id = '${esc(req.params.agentId)}' ORDER BY date DESC LIMIT 1`;
+    }
+    const rows = await dbQuery(sql);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ error: 'No report found' });
+    }
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Daily Activities for a specific bot ──
+app.get('/api/activities/:agentId', async (req, res) => {
+  try {
+    const date = req.query.date;
+    let dateFilter = '';
+    if (date) {
+      dateFilter = `AND date = '${esc(date)}'`;
+    }
+    const rows = await dbQuery(`SELECT * FROM "AP_daily_activities" WHERE agent_id = '${esc(req.params.agentId)}' ${dateFilter} ORDER BY time ASC`);
+    res.json(rows ?? []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/dashboard/history', async (req, res) => {
   try {
     const limit = Number(req.query.limit || 120);
@@ -328,13 +400,12 @@ app.get('/api/dashboard', async (req, res) => {
     const at = req.query.at ? String(req.query.at) : null;
     const timeFilter = at ? `WHERE snapshot_time <= '${esc(at)}'` : '';
 
-    const [sites, containers, crons, agents, servers, reportBots] = await Promise.all([
+    const [sites, containers, crons, bots, servers] = await Promise.all([
       dbQuery(`SELECT DISTINCT ON (name, kind) * FROM "AP_site_checks" ${timeFilter} ORDER BY name, kind, snapshot_time DESC`),
       dbQuery(`SELECT DISTINCT ON (name) * FROM "AP_container_checks" ${timeFilter} ORDER BY name, snapshot_time DESC`),
       dbQuery(`SELECT DISTINCT ON (job_id) * FROM "AP_cron_checks" ${timeFilter} ORDER BY job_id, snapshot_time DESC`),
-      dbQuery(`SELECT DISTINCT ON (agent_id) * FROM "AP_agent_checks" ${timeFilter} ORDER BY agent_id, snapshot_time DESC`),
+      dbQuery(`SELECT * FROM "AP_bots" ORDER BY agent_id`),
       getLatestServerSnapshots(at),
-      dbQuery(`SELECT DISTINCT agent_id FROM "daily_reports" ORDER BY agent_id`),
     ]);
 
     const productionSites = (sites ?? []).filter(s => s.kind === 'production').map(s => ({
@@ -351,46 +422,23 @@ app.get('/api/dashboard', async (req, res) => {
       schedule: c.schedule, model: c.model, lastStatus: c.last_status,
       lastRun: c.last_run, nextRun: c.next_run, consecutiveErrors: c.consecutive_errors,
     }));
-    const agentList = (agents ?? []).map(a => ({
+    const agentList = (bots ?? []).map(a => ({
       id: a.agent_id, name: a.name, emoji: a.emoji, role: a.role,
       project: a.project_slug, github: a.github_url, mm_user_id: a.mm_user_id,
-      production: a.prod_url ? { url: a.prod_url, status: a.prod_status } : null,
-      dev: a.dev_url ? { url: a.dev_url, status: a.dev_status } : null,
-      container: a.container_name ? { name: a.container_name, running: a.container_running, status: a.container_status } : null,
-      crons: { total: a.cron_total, ok: a.cron_ok, error: a.cron_error, jobs: a.cron_jobs ?? [] },
-      tasks: { pending: a.tasks_pending, done: a.tasks_done, total: a.tasks_total },
+      mm_username: a.mm_username,
+      production: a.prod_url ? { url: a.prod_url } : null,
+      dev: a.dev_url ? { url: a.dev_url } : null,
+      container: null,
+      crons: null,
+      tasks: null,
     }));
 
-    // Merge bots from daily_reports that aren't in AP_agent_checks
     const agentIds = new Set(agentList.map(a => a.id));
-    if (reportBots && reportBots.length > 0) {
-      for (const rb of reportBots) {
-        if (!agentIds.has(rb.agent_id)) {
-          // Fetch mm_user_id from cache (populated at startup)
-          const mmInfo = mmBotUserCache[rb.agent_id];
-          agentList.push({
-            id: rb.agent_id,
-            name: mmInfo?.nickname || rb.agent_id,
-            emoji: '🤖',
-            role: 'bot',
-            project: null,
-            github: null,
-            mm_user_id: mmInfo?.id || null,
-            production: null,
-            dev: null,
-            container: null,
-            crons: null,
-            tasks: null,
-          });
-          agentIds.add(rb.agent_id);
-        }
-      }
-    }
 
     const prodUp = productionSites.filter(s => s.status === 200).length;
     const devUp = devServers.filter(s => s.status === 200).length;
-    const latestSnapshot = (agents ?? []).reduce((max, a) => {
-      const t = a.snapshot_time ? new Date(a.snapshot_time).getTime() : 0;
+    const latestSnapshot = (servers ?? []).reduce((max, s) => {
+      const t = s.snapshot_time ? new Date(s.snapshot_time).getTime() : 0;
       return t > max ? t : max;
     }, 0);
 
