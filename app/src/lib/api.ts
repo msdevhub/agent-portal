@@ -124,8 +124,9 @@ export interface DashboardAgent {
   project?: string
   github?: string
   mm_user_id?: string
-  production?: { url: string; status: number } | null
-  dev?: { url: string; status: number } | null
+  mm_username?: string
+  production?: { url: string; status?: number } | null
+  dev?: { url: string; status?: number } | null
   container?: { name: string; running: boolean; status: string } | null
   crons?: { total: number; ok: number; error: number; jobs: Array<{ name: string; lastStatus: string; schedule: string }> }
   tasks?: { pending: number; done: number; total: number } | null
@@ -305,9 +306,89 @@ export const fetchStats = () => api<Stats>('/stats')
 export const fetchProjects = async () => (await api<Project[]>('/projects')).map(normalizeProject)
 export const fetchProject = async (slug: string) => normalizeProject(await api<Project>(`/projects/${slug}`))
 export const fetchDashboard = async (at?: string) => normalizeDashboardData(await api<DashboardData>(`/dashboard${at ? `?at=${encodeURIComponent(at)}` : ''}`))
-export const fetchDashboardHistory = async (limit = 120) => api<{ points: string[]; botPoints?: string[]; serverPoints?: string[] }>(`/dashboard/history?limit=${limit}`)
+export const fetchDashboardHistory = async (limit = 120) => api<{ points: string[]; botPoints?: string[]; serverPoints?: string[]; summaries?: { time: string; bots: number | null; srvs: number | null }[] }>(`/dashboard/history?limit=${limit}`)
 export const fetchDailyReports = (limit = 30, offset = 0, agentId?: string) =>
   api<DailyReport[]>(`/daily-reports?limit=${limit}&offset=${offset}${agentId ? `&agentId=${encodeURIComponent(agentId)}` : ''}`)
+
+// ── Daily Insights ──
+export interface ThingDone {
+  title: string
+  description: string
+  status: "completed" | "in_progress" | "blocked"
+  bots: string[]
+  bot_emojis: string[]
+  time_range: string
+  deliverables: string[]
+  is_focus: boolean
+}
+
+export interface NeedAttention {
+  title: string
+  description: string
+  bot: string
+  bot_emoji: string
+  severity: "high" | "medium"
+  nba?: {
+    action: string
+    target_bot: string
+    message: string
+  }
+}
+
+export interface InsightsStats {
+  active_bots: number
+  total_messages: number
+  things_count: number
+  completed: number
+  in_progress: number
+  blocked: number
+}
+
+export interface InsightsBotSummary {
+  bot: string
+  emoji: string
+  messages: number
+  things: number
+  one_liner: string
+}
+
+export interface DailyInsights {
+  date: string
+  things_done: ThingDone[]
+  needs_attention: NeedAttention[]
+  stats: InsightsStats
+  bot_summaries: InsightsBotSummary[]
+  updated_at?: string
+}
+export const fetchDailyInsights = (date?: string) =>
+  api<DailyInsights | null>(`/insights${date ? `?date=${encodeURIComponent(date)}` : ''}`)
+
+// ── Bot Real-time Status ──
+export interface BotStatusEntry {
+  agent_id: string
+  mm_user_id: string
+  emoji: string
+  name: string
+  status: 'typing' | 'active' | 'idle'
+  lastActivity: number
+  lastMessage: string
+}
+export const fetchBotStatuses = () => api<BotStatusEntry[]>('/bots/status')
+
+// ── Daily Activities ──
+export interface DailyActivity {
+  id: string
+  agent_id: string
+  date: string
+  time: string | null
+  action: string
+  content: string
+  detail: { category?: string; references?: string[]; deliverables?: string[]; who?: string; original_action?: string } | null
+}
+export const fetchDailyActivities = (agentId: string, date?: string) =>
+  api<DailyActivity[]>(`/daily-activities?agent_id=${encodeURIComponent(agentId)}${date ? `&date=${encodeURIComponent(date)}` : ''}`)
+export const fetchDailyActivityDates = (agentId: string) =>
+  api<string[]>(`/daily-activities/dates?agent_id=${encodeURIComponent(agentId)}`)
 export const fetchDailyReport = (date: string) =>
   api<DailyReport>(`/daily-reports/${encodeURIComponent(date)}`)
 export const createDailyReport = (data: { date: string; content: string; agentId?: string }) =>
@@ -453,3 +534,7 @@ export const getOpsMessages = (channelId: string, since?: number) => {
   if (since) path += `&since=${since}`
   return api<OpsMessagesResult>(path)
 }
+
+// ── NBA (Next Best Action) ──
+export const sendNbaMessage = (targetBot: string, message: string) =>
+  api<{ ok: boolean; post_id: string; channel_id: string }>('/nba/send', 'POST', { target_bot: targetBot, message })

@@ -19,7 +19,6 @@ import {
   MessageSquare,
   Monitor,
   RefreshCw,
-  ScrollText,
   Server,
   Shield,
   Timer,
@@ -35,13 +34,13 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
 import { EmptyState } from "@/components/portal/shared"
-import { fetchDailyReports, fetchDailyInsights, type CronJob, type DailyReport, type DailyInsights, type DashboardAgent, type DashboardData, type Project, type ServerSnapshot, type Stats } from "@/lib/api"
+import { fetchDailyInsights, sendNbaMessage, fetchBotStatuses, type BotStatusEntry, type CronJob, type DailyInsights, type InsightsBotSummary, type ThingDone, type NeedAttention, type DashboardAgent, type DashboardData, type Project, type ServerSnapshot, type Stats } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 /* ═══════════════════ Types ═══════════════════ */
 
 /** Mapping: MM username (bot_summaries.bot) → Agent card ID (agents.id) */
-const MM_TO_AGENT_ID: Record<string, string> = {
+export const MM_TO_AGENT_ID: Record<string, string> = {
   researcher: "research",
   craftbot: "research-craft",
   portalbot: "research-portal",
@@ -52,7 +51,7 @@ const MM_TO_AGENT_ID: Record<string, string> = {
 }
 
 /** Reverse mapping: agent ID → MM username */
-const AGENT_ID_TO_MM: Record<string, string> = Object.fromEntries(
+export const AGENT_ID_TO_MM: Record<string, string> = Object.fromEntries(
   Object.entries(MM_TO_AGENT_ID).map(([mm, id]) => [id, mm])
 )
 
@@ -61,9 +60,7 @@ export interface BotSummary {
   bot: string
   emoji: string
   messages: number
-  completed: number
-  pending: number
-  dropped: number
+  things: number
   one_liner?: string
 }
 
@@ -90,6 +87,7 @@ interface DashboardPageProps {
   projectsLoading: boolean
   onCreateProject: () => void
   onOpenProject: (slug: string) => void
+  onOpenBot: (agentId: string) => void
 }
 
 type TabId = "bots" | "servers" | "projects"
@@ -99,11 +97,12 @@ type TabId = "bots" | "servers" | "projects"
 export function DashboardPage({
   dashboard, loading, refreshing, historyPoints, historyBotPoints, historyServerPoints, historySummaries, selectedAsOf, onSelectAsOf,
   stats, projects, recentNotes, projectsLoading,
-  onCreateProject, onOpenProject,
+  onCreateProject, onOpenProject, onOpenBot,
 }: DashboardPageProps) {
   const [activeTab, setActiveTab] = useState<TabId>("bots")
   const [selectedTargets, setSelectedTargets] = useState<CommandTarget[]>([])
   const [insights, setInsights] = useState<DailyInsights | null>(null)
+  const [botStatuses, setBotStatuses] = useState<Record<string, BotStatusEntry>>({})
 
   const summary = dashboard.summary ?? {}
   const lastUpdated = dashboard.updated_at ?? summary.timestamp ?? null
@@ -118,15 +117,48 @@ export function DashboardPage({
     fetchDailyInsights(date).then(d => setInsights(d)).catch(() => {})
   }, [selectedAsOf])
 
+  // Fetch initial bot statuses + listen to SSE for real-time updates
+  useEffect(() => {
+    fetchBotStatuses().then(statuses => {
+      const map: Record<string, BotStatusEntry> = {}
+      for (const s of statuses) map[s.agent_id] = s
+      setBotStatuses(map)
+    }).catch(() => {})
+
+    const es = new EventSource('/api/ops/stream')
+    const handler = (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data) as BotStatusEntry & { timestamp: number }
+        setBotStatuses(prev => ({
+          ...prev,
+          [data.agent_id]: {
+            agent_id: data.agent_id,
+            mm_user_id: data.mm_user_id,
+            emoji: prev[data.agent_id]?.emoji ?? '',
+            name: prev[data.agent_id]?.name ?? data.agent_id,
+            status: data.status,
+            lastActivity: data.timestamp ?? Date.now(),
+            lastMessage: data.lastMessage ?? prev[data.agent_id]?.lastMessage ?? '',
+          },
+        }))
+      } catch { /* ignore */ }
+    }
+    es.addEventListener('bot_status', handler)
+    return () => {
+      es.removeEventListener('bot_status', handler)
+      es.close()
+    }
+  }, [])
+
   // Build bot_summaries lookup by agent ID
   const botSummaryMap = useMemo(() => {
     const map: Record<string, BotSummary> = {}
     if (!insights?.bot_summaries) return map
     for (const bs of insights.bot_summaries) {
-      const agentId = MM_TO_AGENT_ID[bs.bot]
-      if (agentId) map[agentId] = bs
-      // Also index by the MM username itself (for virtual cards)
-      map[`__mm__${bs.bot}`] = bs
+      const agentId = MM_TO_AGENT_ID[bs.bot] ?? bs.bot
+      map[agentId] = bs
+      // Also index by MM username for lookup
+      if (MM_TO_AGENT_ID[bs.bot]) map[`__mm__${bs.bot}`] = bs
     }
     return map
   }, [insights])
@@ -160,7 +192,7 @@ export function DashboardPage({
 
       {/* Tab Bar + Inline Time Machine */}
       <div className="mb-5 flex flex-wrap items-center gap-2">
-        <TabButton active={activeTab === "bots"} onClick={() => setActiveTab("bots")} icon={Workflow} label="Bot Fleet" count={agents.length} />
+        <TabButton active={activeTab === "bots"} onClick={() => setActiveTab("bots")} icon={Workflow} label="Bot Fleet" count={insights?.bot_summaries?.length ?? agents.length} />
         <TabButton active={activeTab === "servers"} onClick={() => setActiveTab("servers")} icon={Server} label="Server Fleet" count={`${serverOnlineCount}/${servers.length}`} />
         {/* Spacer */}
         <div className="flex-1" />
@@ -191,8 +223,10 @@ export function DashboardPage({
             selectedTargets={selectedTargets}
             onToggleTarget={handleToggleTarget}
             onOpenProject={onOpenProject}
+            onOpenBot={onOpenBot}
             botSummaryMap={botSummaryMap}
             botSummaries={insights?.bot_summaries}
+            botStatuses={botStatuses}
           />
         )}
         {activeTab === "servers" && (
@@ -553,31 +587,44 @@ function MobileTimePicker({ points, summaries, selectedIndex, onSelect, onClose 
 
 /* ═══════════════════ Daily Insights Card ═══════════════════ */
 
+const STATUS_ICON: Record<string, string> = {
+  completed: "✅",
+  in_progress: "⏳",
+  blocked: "🚫",
+}
+
 const SEVERITY_COLORS: Record<string, string> = {
   high: "bg-rose-500/10 text-rose-400 border-rose-500/20",
   medium: "bg-amber-500/10 text-amber-400 border-amber-500/20",
-  low: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20",
-}
-
-const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
-  completed: { label: "完成", cls: "bg-emerald-500/15 text-emerald-400 border-emerald-500/25" },
-  in_progress: { label: "进行中", cls: "bg-amber-500/15 text-amber-400 border-amber-500/25" },
-  dropped: { label: "遗漏", cls: "bg-rose-500/15 text-rose-400 border-rose-500/25" },
-  needs_attention: { label: "需关注", cls: "bg-rose-500/15 text-rose-400 border-rose-500/25" },
 }
 
 function DailyInsightsCard({ insights: data }: { insights: DailyInsights | null }) {
   const [collapsed, setCollapsed] = useState(false)
-  const [timelineOpen, setTimelineOpen] = useState(false)
+  const [thingsOpen, setThingsOpen] = useState(false)
+  const [expandedThing, setExpandedThing] = useState<number | null>(null)
+  const [nbaSending, setNbaSending] = useState<Record<number, boolean>>({})
+  const [nbaSent, setNbaSent] = useState<Record<number, boolean>>({})
 
   if (!data) return null
 
-  const { focus_top3, needs_attention, timeline, stats, bot_summaries } = data
-  const sortedTimeline = [...(timeline ?? [])].sort((a, b) => a.time.localeCompare(b.time))
+  const { things_done, needs_attention, stats } = data
+  const focusItems = things_done?.filter(t => t.is_focus) ?? []
+
+  const handleNba = async (idx: number, nba: NeedAttention["nba"]) => {
+    if (!nba || nbaSending[idx] || nbaSent[idx]) return
+    setNbaSending(p => ({ ...p, [idx]: true }))
+    try {
+      await sendNbaMessage(nba.target_bot, nba.message)
+      setNbaSent(p => ({ ...p, [idx]: true }))
+    } catch (e) {
+      console.error("NBA send failed:", e)
+    } finally {
+      setNbaSending(p => ({ ...p, [idx]: false }))
+    }
+  }
 
   return (
     <div className="mb-4 space-y-3">
-      {/* ── Header Card: Focus + Attention + Stats ── */}
       <div className="rounded-xl border border-zinc-800/60 bg-[#111113] overflow-hidden">
         <button
           type="button"
@@ -598,34 +645,55 @@ function DailyInsightsCard({ insights: data }: { insights: DailyInsights | null 
 
         {!collapsed && (
           <div className="border-t border-zinc-800/40 px-4 py-3 space-y-4">
-            {/* Focus Top 3 */}
-            {focus_top3?.length > 0 && (
+            {/* ── 1. Stats Bar ── */}
+            {stats && (
+              <div className="flex flex-wrap gap-3 rounded-lg bg-[#0c0c0e] px-3 py-2.5">
+                <StatBadge icon={FlaskConical} label="事项" value={stats.things_count} color="text-sky-400" />
+                <StatBadge icon={CheckCircle2} label="完成" value={stats.completed} color="text-emerald-400" />
+                <StatBadge icon={Clock} label="进行中" value={stats.in_progress} color="text-amber-400" />
+                {stats.blocked > 0 && <StatBadge icon={AlertTriangle} label="阻塞" value={stats.blocked} color="text-rose-400" />}
+                <StatBadge icon={Bot} label="活跃 Bot" value={stats.active_bots} color="text-emerald-400" />
+                <StatBadge icon={MessageSquare} label="消息" value={stats.total_messages} color="text-zinc-400" />
+              </div>
+            )}
+
+            {/* ── 2. Focus Items ── */}
+            {focusItems.length > 0 && (
               <div className="space-y-2">
                 <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">🎯 今日焦点</div>
-                {focus_top3.map((f, i) => (
+                {focusItems.map((f, i) => (
                   <div key={i} className="rounded-lg bg-amber-500/5 border border-amber-500/10 px-3 py-2.5">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm">{f.bot_emoji}</span>
-                      <span className="text-xs font-semibold text-zinc-100">{f.title}</span>
+                      <span className="text-sm">{STATUS_ICON[f.status] ?? "📌"}</span>
+                      <span className="text-xs font-semibold text-zinc-100 flex-1">{f.title}</span>
+                      <span className="text-[10px] text-zinc-600">{f.time_range}</span>
                     </div>
-                    <div className="text-[11px] text-zinc-400 mt-1 leading-relaxed">{f.description}</div>
-                    <div className="text-[10px] text-zinc-600 mt-1">@{f.bot}</div>
+                    <div className="text-[11px] text-zinc-400 mt-1 leading-relaxed line-clamp-2">{f.description}</div>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <div className="flex items-center gap-1">
+                        {f.bot_emojis?.map((e, ei) => <span key={ei} className="text-xs">{e}</span>)}
+                        {f.bots?.map((b, bi) => <span key={bi} className="text-[10px] text-zinc-500">@{b}</span>)}
+                      </div>
+                      {f.deliverables?.length > 0 && (
+                        <span className="text-[10px] text-emerald-400/70">📦 {f.deliverables.length} 产出</span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
             )}
 
-            {/* Needs Attention */}
+            {/* ── 3. Needs Attention ── */}
             {needs_attention?.length > 0 && (
               <div className="space-y-1.5">
                 <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">🔔 需要关注</div>
                 {[...needs_attention].sort((a, b) => {
-                  const order: Record<string, number> = { high: 0, medium: 1, low: 2 }
-                  return (order[a.severity] ?? 2) - (order[b.severity] ?? 2)
-                }).map((n, i) => (
+                  const order: Record<string, number> = { high: 0, medium: 1 }
+                  return (order[a.severity] ?? 1) - (order[b.severity] ?? 1)
+                }).slice(0, 5).map((n, i) => (
                   <div key={i} className={cn(
                     "rounded-lg border px-3 py-2",
-                    SEVERITY_COLORS[n.severity] ?? SEVERITY_COLORS.low,
+                    SEVERITY_COLORS[n.severity] ?? SEVERITY_COLORS.medium,
                   )}>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
@@ -637,95 +705,89 @@ function DailyInsightsCard({ insights: data }: { insights: DailyInsights | null 
                     {n.description && (
                       <div className="text-[11px] mt-0.5 opacity-80 pl-6">{n.description}</div>
                     )}
+                    {/* NBA Button */}
+                    {n.nba && (
+                      <div className="mt-1.5 pl-6">
+                        <button
+                          type="button"
+                          onClick={() => handleNba(i, n.nba)}
+                          disabled={nbaSending[i] || nbaSent[i]}
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                            nbaSent[i]
+                              ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 cursor-default"
+                              : nbaSending[i]
+                              ? "bg-zinc-800 text-zinc-500 border border-zinc-700 cursor-wait"
+                              : "bg-sky-500/15 text-sky-300 border border-sky-500/25 hover:bg-sky-500/25 cursor-pointer"
+                          )}
+                        >
+                          {nbaSent[i] ? "✅ 已发送" : nbaSending[i] ? "发送中..." : `⚡ ${n.nba.action}`}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             )}
 
-            {/* Stats Bar */}
-            {stats && (
-              <div className="flex flex-wrap gap-3 rounded-lg bg-[#0c0c0e] px-3 py-2.5">
-                <StatBadge icon={Bot} label="活跃 Bot" value={stats.active_bots} color="text-emerald-400" />
-                <StatBadge icon={MessageSquare} label="消息" value={stats.total_messages} color="text-sky-400" />
-                <StatBadge icon={CheckCircle2} label="完成" value={stats.completed} color="text-emerald-400" />
-                <StatBadge icon={Clock} label="进行中" value={stats.in_progress} color="text-amber-400" />
-                {stats.needs_attention > 0 && (
-                  <StatBadge icon={AlertTriangle} label="需关注" value={stats.needs_attention} color="text-rose-400" />
+            {/* ── 4. Things Done (collapsible full list) ── */}
+            {things_done?.length > 0 && (
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => setThingsOpen(!thingsOpen)}
+                  className="flex items-center gap-1.5 text-[10px] font-medium text-zinc-500 uppercase tracking-wider hover:text-zinc-400 transition-colors"
+                >
+                  <span>📋 今天做了什么 ({things_done.length})</span>
+                  <ChevronDown className={cn("h-3 w-3 transition-transform", thingsOpen && "rotate-180")} />
+                </button>
+                {thingsOpen && (
+                  <div className="space-y-1 mt-1">
+                    {things_done.map((t, i) => {
+                      const isExpanded = expandedThing === i
+                      return (
+                        <div key={i} className="rounded-lg border border-zinc-800/40 bg-[#0c0c0e] overflow-hidden">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedThing(isExpanded ? null : i)}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-zinc-800/30 transition-colors"
+                          >
+                            <span className="text-sm shrink-0">{STATUS_ICON[t.status] ?? "📌"}</span>
+                            <span className="text-xs text-zinc-200 flex-1 truncate">{t.title}</span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {t.bots?.map((b, bi) => (
+                                <span key={bi} className="text-[10px]">{t.bot_emojis?.[bi] ?? "🤖"}</span>
+                              ))}
+                              <span className="text-[10px] text-zinc-600">{t.time_range}</span>
+                            </div>
+                          </button>
+                          {isExpanded && (
+                            <div className="border-t border-zinc-800/30 px-3 py-2 space-y-1.5">
+                              <div className="text-[11px] text-zinc-400 leading-relaxed">{t.description}</div>
+                              <div className="flex items-center gap-1.5 text-[10px] text-zinc-500">
+                                {t.bots?.map((b, bi) => <span key={bi}>@{b}</span>)}
+                              </div>
+                              {t.deliverables?.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {t.deliverables.map((d, di) => (
+                                    <code key={di} className="rounded bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 text-[9px] text-emerald-300 font-mono truncate max-w-[220px]">
+                                      📄 {d}
+                                    </code>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
                 )}
               </div>
             )}
           </div>
         )}
       </div>
-
-      {/* ── Unified Timeline ── */}
-      {sortedTimeline.length > 0 && (
-        <div className="rounded-xl border border-zinc-800/60 bg-[#111113] overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setTimelineOpen(!timelineOpen)}
-            className="flex w-full items-center justify-between px-4 py-3 hover:bg-zinc-800/30 transition-colors"
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500/10">
-                <History className="h-4 w-4 text-sky-400" />
-              </div>
-              <div className="text-left">
-                <div className="text-sm font-semibold text-zinc-100">事件流</div>
-                <div className="text-[11px] text-zinc-500">{sortedTimeline.length} 条事件</div>
-              </div>
-            </div>
-            <ChevronDown className={cn("h-4 w-4 text-zinc-500 transition-transform", timelineOpen && "rotate-180")} />
-          </button>
-
-          {timelineOpen && (
-            <div className="border-t border-zinc-800/40 px-4 py-3 space-y-0">
-              {sortedTimeline.map((ev, i) => {
-                const badge = STATUS_BADGE[ev.status] ?? { label: ev.status, cls: "bg-zinc-500/15 text-zinc-400 border-zinc-500/25" }
-                const isLast = i === sortedTimeline.length - 1
-                return (
-                  <div key={i} className={cn(
-                    "relative pl-7 pb-3",
-                    ev.is_focus && "bg-amber-500/[0.03] -mx-4 px-[calc(1rem+28px)] rounded-lg"
-                  )}>
-                    {/* Vertical line */}
-                    {!isLast && (
-                      <div className="absolute left-[11px] top-5 bottom-0 w-px bg-zinc-700/40" />
-                    )}
-                    {/* Dot */}
-                    <div className={cn(
-                      "absolute left-0 top-1 h-[22px] w-[22px] rounded-full flex items-center justify-center text-xs border",
-                      ev.is_focus ? "border-amber-500/30 bg-amber-500/10" : "border-zinc-700/50 bg-[#18181b]",
-                    )}>
-                      <span className="text-[11px]">{ev.bot_emoji}</span>
-                    </div>
-                    {/* Content */}
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[10px] font-mono text-zinc-500">{ev.time}</span>
-                        <span className="text-xs text-zinc-300 font-medium">{ev.title}</span>
-                        <span className={cn("rounded-full border px-1.5 py-0.5 text-[9px] font-medium", badge.cls)}>
-                          {badge.label}
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-zinc-600 mt-0.5">@{ev.bot}</div>
-                      {ev.deliverables?.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {ev.deliverables.map((d, di) => (
-                            <code key={di} className="rounded bg-zinc-800/60 px-1.5 py-0.5 text-[9px] text-zinc-400 font-mono truncate max-w-[200px]">
-                              {d}
-                            </code>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }
@@ -795,72 +857,88 @@ function useArchivedBots() {
 
 /* ═══════════════════ Bot Fleet Tab ═══════════════════ */
 
-function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOpenProject, botSummaryMap, botSummaries }: {
-  dashboard: DashboardData; loading: boolean; selectedTargets: CommandTarget[]; onToggleTarget: (t: CommandTarget) => void; onOpenProject: (slug: string) => void; botSummaryMap: Record<string, BotSummary>; botSummaries?: BotSummary[]
+function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOpenProject, onOpenBot, botSummaryMap, botSummaries, botStatuses }: {
+  dashboard: DashboardData; loading: boolean; selectedTargets: CommandTarget[]; onToggleTarget: (t: CommandTarget) => void; onOpenProject: (slug: string) => void; onOpenBot: (agentId: string) => void; botSummaryMap: Record<string, BotSummary>; botSummaries?: BotSummary[]; botStatuses: Record<string, BotStatusEntry>
 }) {
   const agents = dashboard.agents ?? []
   const { archived, toggleArchive } = useArchivedBots()
   const [showArchived, setShowArchived] = useState(false)
 
-  // Find bots in bot_summaries that don't have a matching agent card
-  const virtualAgents = useMemo(() => {
-    if (!botSummaries?.length) return []
-    const existingIds = new Set(agents.map(a => a.id))
-    return botSummaries
-      .filter(bs => {
-        const agentId = MM_TO_AGENT_ID[bs.bot]
-        // Not mapped, or mapped but not in existing agents
-        return !agentId || !existingIds.has(agentId)
-      })
-      .filter(bs => {
-        // Also skip if mapped ID exists
-        const mappedId = MM_TO_AGENT_ID[bs.bot]
-        return !mappedId || !existingIds.has(mappedId)
-      })
-      .map(bs => ({
-        id: MM_TO_AGENT_ID[bs.bot] ?? bs.bot,
-        name: bs.bot,
-        role: "normal" as const,
-        mm_user_id: null,
-        production: null,
-        dev: null,
-        container: null,
-        crons: null,
-        tasks: null,
-        project: null,
-        _virtual: true,
-        _emoji: bs.emoji,
-      }))
-  }, [agents, botSummaries])
+  // Build cards from bot_summaries only (primary source)
+  // Merge operational data from agents if available
+  const agentById = useMemo(() => {
+    const m = new Map<string, DashboardAgent>()
+    for (const a of agents) m.set(a.id, a)
+    return m
+  }, [agents])
 
-  const allAgents = [...agents, ...virtualAgents] as (DashboardAgent & { _virtual?: boolean; _emoji?: string })[]
-  const activeAgents = allAgents.filter(a => !archived.has(a.id))
-  const archivedAgents = allAgents.filter(a => archived.has(a.id))
+  const allCards = useMemo(() => {
+    if (!botSummaries?.length) return []
+    return botSummaries.map(bs => {
+      const agentId = MM_TO_AGENT_ID[bs.bot] ?? bs.bot
+      const existing = agentById.get(agentId)
+      // Merge: use existing agent data if available, overlay with summary info
+      const card: DashboardAgent & { _emoji?: string } = existing
+        ? { ...existing, _emoji: bs.emoji }
+        : {
+            id: agentId,
+            name: bs.bot,
+            role: undefined,
+            mm_user_id: undefined,
+            production: null,
+            dev: null,
+            container: null,
+            crons: undefined,
+            tasks: null,
+            project: undefined,
+            _emoji: bs.emoji,
+          }
+      return card
+    })
+  }, [botSummaries, agentById])
+
+  const activeCards = allCards.filter(a => !archived.has(a.id))
+  const archivedCards = allCards.filter(a => archived.has(a.id))
+  const [allExpanded, setAllExpanded] = useState(true) // default: all expanded
 
   return (
     <div className="space-y-3">
-      {loading && agents.length === 0 ? <EmptyRow text="加载中..." /> : agents.length === 0 ? <EmptyRow text="暂无 Agent 数据" /> : (
+      {loading && allCards.length === 0 ? <EmptyRow text="加载中..." /> : allCards.length === 0 ? <EmptyRow text="暂无日报数据" /> : (
         <>
+          {/* Expand/Collapse toggle */}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setAllExpanded(!allExpanded)}
+              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition-colors"
+            >
+              <ChevronDown className={cn("h-3 w-3 transition-transform", allExpanded && "rotate-180")} />
+              {allExpanded ? "全部收起" : "全部展开"}
+            </button>
+          </div>
           {/* Active bots */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {activeAgents.map((agent) => (
+            {activeCards.map((agent) => (
               <BotCard
                 key={agent.id}
                 agent={agent}
                 selected={selectedTargets.some(t => t.id === agent.id)}
                 onToggle={() => onToggleTarget({ id: agent.id, name: agent.name ?? agent.id, emoji: (agent as any)._emoji ?? "🤖", user_id: agent.mm_user_id!, kind: "bot" })}
                 onOpenProject={onOpenProject}
+                onOpenBot={onOpenBot}
                 onArchive={() => toggleArchive(agent.id)}
                 isArchived={false}
                 botSummary={botSummaryMap[agent.id]}
-                isVirtual={(agent as any)._virtual}
+                isVirtual={!agentById.has(agent.id)}
                 virtualEmoji={(agent as any)._emoji}
+                forceExpanded={allExpanded}
+                liveStatus={botStatuses[agent.id]}
               />
             ))}
           </div>
 
           {/* Archived section */}
-          {archivedAgents.length > 0 && (
+          {archivedCards.length > 0 && (
             <div className="mt-4">
               <button
                 type="button"
@@ -868,23 +946,26 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
                 className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 transition-colors"
               >
                 <Archive className="h-3.5 w-3.5" />
-                <span>已归档 ({archivedAgents.length})</span>
+                <span>已归档 ({archivedCards.length})</span>
                 <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showArchived && "rotate-180")} />
               </button>
               {showArchived && (
                 <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 opacity-60">
-                  {archivedAgents.map((agent) => (
+                  {archivedCards.map((agent) => (
                     <BotCard
                       key={agent.id}
                       agent={agent}
                       selected={selectedTargets.some(t => t.id === agent.id)}
                       onToggle={() => onToggleTarget({ id: agent.id, name: agent.name ?? agent.id, emoji: (agent as any)._emoji ?? "🤖", user_id: agent.mm_user_id!, kind: "bot" })}
                       onOpenProject={onOpenProject}
+                      onOpenBot={onOpenBot}
                       onArchive={() => toggleArchive(agent.id)}
                       isArchived={true}
                       botSummary={botSummaryMap[agent.id]}
-                      isVirtual={(agent as any)._virtual}
+                      isVirtual={!agentById.has(agent.id)}
                       virtualEmoji={(agent as any)._emoji}
+                      forceExpanded={allExpanded}
+                      liveStatus={botStatuses[agent.id]}
                     />
                   ))}
                 </div>
@@ -897,8 +978,8 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
   )
 }
 
-function BotCard({ agent, selected, onToggle, onOpenProject, onArchive, isArchived, botSummary, isVirtual, virtualEmoji }: { agent: DashboardAgent; selected: boolean; onToggle: () => void; onOpenProject: (slug: string) => void; onArchive: () => void; isArchived: boolean; botSummary?: BotSummary; isVirtual?: boolean; virtualEmoji?: string }) {
-  const [expanded, setExpanded] = useState(false)
+function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchive, isArchived, botSummary, isVirtual, virtualEmoji, forceExpanded, liveStatus }: { agent: DashboardAgent; selected: boolean; onToggle: () => void; onOpenProject: (slug: string) => void; onOpenBot: (agentId: string) => void; onArchive: () => void; isArchived: boolean; botSummary?: BotSummary; isVirtual?: boolean; virtualEmoji?: string; forceExpanded?: boolean; liveStatus?: BotStatusEntry }) {
+  const expanded = forceExpanded ?? false
   const [cronOpen, setCronOpen] = useState(false)
   
   const mmUsername = AGENT_ID_TO_MM[agent.id] ?? agent.id
@@ -916,20 +997,30 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onArchive, isArchiv
         "group relative flex flex-col gap-2.5 rounded-xl border bg-[#111113] transition-all hover:border-zinc-700",
         selected ? "border-emerald-500/50 bg-emerald-500/5 ring-1 ring-emerald-500/20" : "border-zinc-800/80"
       )}>
-        {/* Layer 1: Summary - Click to toggle expansion */}
+        {/* Layer 1: Summary */}
         <div 
-          className="flex items-start justify-between gap-2 p-3.5 cursor-pointer"
-          onClick={() => setExpanded(!expanded)}
+          className="flex items-start justify-between gap-2 p-3.5"
         >
           <div className="flex items-center gap-2.5">
-            <div className={cn(
-              "flex h-9 w-9 items-center justify-center rounded-lg border transition-colors",
-              selected ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-zinc-800 bg-[#18181b] text-zinc-400 group-hover:border-zinc-700 group-hover:text-zinc-300"
-            )}>
-              {isVirtual && virtualEmoji ? (
-                <span className="text-lg">{virtualEmoji}</span>
-              ) : (
-                <Workflow className="h-4.5 w-4.5" />
+            <div className="relative">
+              <div className={cn(
+                "flex h-9 w-9 items-center justify-center rounded-lg border transition-colors",
+                selected ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-zinc-800 bg-[#18181b] text-zinc-400 group-hover:border-zinc-700 group-hover:text-zinc-300"
+              )}>
+                {isVirtual && virtualEmoji ? (
+                  <span className="text-lg">{virtualEmoji}</span>
+                ) : (
+                  <Workflow className="h-4.5 w-4.5" />
+                )}
+              </div>
+              {/* Live status indicator */}
+              {liveStatus && (
+                <span className={cn(
+                  "absolute -bottom-0.5 -right-0.5 block h-2.5 w-2.5 rounded-full border-2 border-[#111113]",
+                  liveStatus.status === 'typing' && "bg-emerald-400 animate-pulse",
+                  liveStatus.status === 'active' && "bg-sky-400",
+                  liveStatus.status === 'idle' && "bg-zinc-600",
+                )} title={liveStatus.status === 'typing' ? '正在输入...' : liveStatus.status === 'active' ? '活跃' : '空闲'} />
               )}
             </div>
             <div>
@@ -960,16 +1051,19 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onArchive, isArchiv
                     <span className="text-zinc-400 truncate max-w-[180px]">{botSummary.one_liner}</span>
                   )}
                   <span className="text-sky-400">{botSummary.messages} msg</span>
-                  <span className="text-emerald-400">✓{botSummary.completed}</span>
-                  {botSummary.pending > 0 && <span className="text-amber-400">⏳{botSummary.pending}</span>}
-                  {botSummary.dropped > 0 && <span className="text-rose-400">✗{botSummary.dropped}</span>}
+                  {botSummary.things > 0 && <span className="text-emerald-400">📋{botSummary.things} 事项</span>}
+                </div>
+              )}
+              {/* Live last message preview */}
+              {liveStatus?.lastMessage && (
+                <div className="mt-0.5 text-[10px] text-zinc-500 truncate max-w-[240px]" title={liveStatus.lastMessage}>
+                  💬 {liveStatus.lastMessage}
                 </div>
               )}
             </div>
           </div>
           
           <div className="flex items-center gap-2">
-             <ChevronDown className={cn("h-4 w-4 text-zinc-500 transition-transform duration-200", expanded && "rotate-180")} />
              {canMessage && (
                <button onClick={(e) => { e.stopPropagation(); onToggle() }} className={cn(
                  "ml-1 rounded-lg p-1.5 transition",
@@ -1050,25 +1144,15 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onArchive, isArchiv
               </div>
             )}
 
-            <DailyReportsSection agentId={mmUsername} />
-            <ActivityTimeline agentId={mmUsername} />
-
             {/* Actions */}
             <div className="flex gap-2 pt-1">
-               {hasProject ? (
-                 <button 
-                   onClick={() => agent.project && onOpenProject(agent.project)}
-                   className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 py-1.5 text-xs font-medium text-zinc-200 transition-colors"
-                 >
-                   <FlaskConical className="h-3.5 w-3.5" />
-                   详情
-                 </button>
-               ) : (
-                 <div className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-zinc-800 bg-transparent py-1.5 text-xs text-zinc-500 cursor-not-allowed">
-                   <FlaskConical className="h-3.5 w-3.5" />
-                   无项目
-                 </div>
-               )}
+               <button 
+                 onClick={(e) => { e.stopPropagation(); onOpenBot(agent.id) }}
+                 className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 py-1.5 text-xs font-semibold text-white transition-colors"
+               >
+                 <FileText className="h-3.5 w-3.5" />
+                 查看详情
+               </button>
                
                {canMessage && (
                  <button 
@@ -1097,249 +1181,6 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onArchive, isArchiv
       </div>
 
     </>
-  )
-}
-
-function DailyReportsSection({ agentId }: { agentId: string }) {
-  const [reports, setReports] = useState<DailyReport[]>([])
-  const [loading, setLoading] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-  const [openReport, setOpenReport] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-
-    const loadReports = async () => {
-      setLoading(true)
-      try {
-        const nextReports = await fetchDailyReports(10, 0, agentId)
-        if (cancelled) return
-        const safeReports = nextReports ?? []
-        setReports(safeReports)
-        setOpenReport((current) => current ?? safeReports[0]?.date ?? null)
-      } catch {
-        if (!cancelled) {
-          setReports([])
-          setOpenReport(null)
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false)
-          setLoaded(true)
-        }
-      }
-    }
-
-    void loadReports()
-
-    return () => {
-      cancelled = true
-    }
-  }, [agentId])
-
-  const handleToggleReport = (date: string) => {
-    setOpenReport((current) => (current === date ? null : date))
-  }
-
-  return (
-    <div className="rounded-md border border-zinc-800/50 bg-[#18181b]">
-      <div className="flex items-center justify-between gap-2 px-2.5 py-2 text-xs">
-        <div className="inline-flex items-center gap-2 text-zinc-400">
-          <ScrollText className="h-3.5 w-3.5 text-zinc-500" />
-          <span>日报</span>
-        </div>
-        <span className="text-[10px] text-zinc-600">最近 10 条</span>
-      </div>
-
-      <div className="border-t border-zinc-800/50 px-2.5 py-2">
-        {loading && !loaded ? (
-          <div className="rounded-md bg-[#111113] px-3 py-4 text-xs text-zinc-500">加载中...</div>
-        ) : reports.length === 0 ? (
-          <EmptyState
-            compact
-            icon={<FileText className="h-4 w-4" />}
-            title="暂无日报"
-            message="这个 bot 还没有可展示的日报。"
-          />
-        ) : (
-          <div className="space-y-1.5">
-            {reports.map((report, index) => {
-              const expanded = openReport === report.date
-              const isLast = index === reports.length - 1
-
-              return (
-                <div key={report.id} className="relative pl-5">
-                  {!isLast && (
-                    <div className="absolute left-[7px] top-4 bottom-0 w-px bg-zinc-600/35" aria-hidden="true" />
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => handleToggleReport(report.date)}
-                    className="group relative flex w-full items-start justify-between gap-3 rounded-md px-0 py-1 text-left transition-colors hover:bg-zinc-900/20"
-                  >
-                    <span
-                      className={cn(
-                        "absolute left-[-20px] top-2.5 h-3 w-3 rounded-full border transition-colors",
-                        expanded
-                          ? "border-emerald-400/80 bg-emerald-400 shadow-[0_0_0_2px_rgba(16,185,129,0.12)]"
-                          : "border-zinc-500/70 bg-[#18181b] group-hover:border-zinc-400/80"
-                      )}
-                      aria-hidden="true"
-                    />
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="truncate text-xs font-medium text-zinc-300">{report.date}</span>
-                        <span className="text-[10px] text-zinc-600">{expanded ? "收起" : "展开"}</span>
-                      </div>
-                    </div>
-                  </button>
-
-                  {expanded && (
-                    <div className="pb-2 pt-1">
-                      <div className="rounded-md border border-zinc-800/60 bg-[#111113] px-3 py-2.5">
-                        <div className="prose prose-invert prose-sm max-w-none text-sm prose-headings:mb-2 prose-headings:text-zinc-100 prose-headings:text-sm prose-p:my-2 prose-p:text-zinc-300 prose-p:leading-6 prose-a:text-cyan-300 prose-strong:text-zinc-100 prose-code:rounded prose-code:bg-zinc-800/50 prose-code:px-1 prose-code:py-0.5 prose-code:text-emerald-300 prose-pre:border prose-pre:border-zinc-800/60 prose-pre:bg-[#09090b] prose-pre:p-3 prose-li:my-0.5 prose-li:text-zinc-300 prose-th:text-zinc-200 prose-td:text-zinc-300 prose-hr:border-zinc-800 [&_*]:break-words [&_ul]:my-2 [&_ol]:my-2 [&_li>p]:my-0.5">
-                          <MarkdownBlock content={report.content} />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function MarkdownBlock({ content }: { content: string }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-}
-
-/* ═══════════════════ Activity Timeline ═══════════════════ */
-
-import { fetchDailyActivities, fetchDailyActivityDates, type DailyActivity } from "@/lib/api"
-
-const ACTION_ICONS: Record<string, { icon: string; color: string }> = {
-  completed: { icon: "✅", color: "text-emerald-400" },
-  in_progress: { icon: "⏳", color: "text-amber-400" },
-  dropped: { icon: "❌", color: "text-rose-400" },
-  promise_no_result: { icon: "⚠️", color: "text-amber-400" },
-  no_response: { icon: "🔇", color: "text-zinc-500" },
-}
-
-function ActivityTimeline({ agentId }: { agentId: string }) {
-  const [activities, setActivities] = useState<DailyActivity[]>([])
-  const [dates, setDates] = useState<string[]>([])
-  const [selectedDate, setSelectedDate] = useState<string>("")
-  const [loading, setLoading] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-  const [open, setOpen] = useState(false)
-
-  // Load available dates
-  useEffect(() => {
-    let cancelled = false
-    fetchDailyActivityDates(agentId).then(d => {
-      if (!cancelled && d?.length) {
-        setDates(d)
-        setSelectedDate(d[0]) // latest
-      }
-    }).catch(() => {})
-    return () => { cancelled = true }
-  }, [agentId])
-
-  // Load activities for selected date
-  useEffect(() => {
-    if (!selectedDate) return
-    let cancelled = false
-    setLoading(true)
-    fetchDailyActivities(agentId, selectedDate).then(a => {
-      if (!cancelled) { setActivities(a ?? []); setLoading(false); setLoaded(true) }
-    }).catch(() => { if (!cancelled) { setActivities([]); setLoading(false); setLoaded(true) } })
-    return () => { cancelled = true }
-  }, [agentId, selectedDate])
-
-  // Don't show section if no dates available
-  if (dates.length === 0 && loaded) return null
-  if (dates.length === 0) return null
-
-  return (
-    <div className="rounded-md border border-zinc-800/50 bg-[#18181b]">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-xs hover:bg-zinc-800/30 transition-colors"
-      >
-        <div className="inline-flex items-center gap-2 text-zinc-400">
-          <Clock className="h-3.5 w-3.5 text-zinc-500" />
-          <span>活动时间线</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {dates.length > 0 && (
-            <select
-              value={selectedDate}
-              onChange={(e) => { e.stopPropagation(); setSelectedDate(e.target.value) }}
-              onClick={(e) => e.stopPropagation()}
-              className="rounded bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300"
-            >
-              {dates.map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
-          )}
-          <ChevronDown className={cn("h-3 w-3 text-zinc-500 transition-transform", open && "rotate-180")} />
-        </div>
-      </button>
-
-      {open && (
-        <div className="border-t border-zinc-800/50 px-2.5 py-2">
-          {loading ? (
-            <div className="text-xs text-zinc-500 py-3 text-center">加载中...</div>
-          ) : activities.length === 0 ? (
-            <div className="text-xs text-zinc-500 py-3 text-center">今日无活动记录</div>
-          ) : (
-            <div className="space-y-0">
-              {activities.map((act, i) => {
-                const actionCfg = ACTION_ICONS[act.action] ?? { icon: "📌", color: "text-zinc-400" }
-                const isLast = i === activities.length - 1
-                return (
-                  <div key={act.id} className="relative pl-6 pb-2">
-                    {/* Vertical line */}
-                    {!isLast && (
-                      <div className="absolute left-[9px] top-5 bottom-0 w-px bg-zinc-700/40" />
-                    )}
-                    {/* Dot */}
-                    <span className="absolute left-0 top-0.5 text-sm">{actionCfg.icon}</span>
-                    {/* Content */}
-                    <div>
-                      <div className="flex items-center gap-2">
-                        {act.time && (
-                          <span className="text-[10px] font-mono text-zinc-500">{act.time}</span>
-                        )}
-                        <span className={cn("text-[10px] font-medium uppercase", actionCfg.color)}>
-                          {act.action}
-                        </span>
-                      </div>
-                      <div className="text-xs text-zinc-300 mt-0.5">{act.content}</div>
-                      {act.detail?.references?.length ? (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {act.detail.references.map((ref, ri) => (
-                            <code key={ri} className="rounded bg-zinc-800/60 px-1.5 py-0.5 text-[9px] text-zinc-400 font-mono">
-                              {ref}
-                            </code>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
   )
 }
 

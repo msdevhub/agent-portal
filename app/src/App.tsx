@@ -19,6 +19,8 @@ import {
 } from "@/lib/api"
 import type { DashboardData, Project, Stats } from "@/lib/api"
 import { DashboardPage } from "@/pages/DashboardPage"
+import { AGENT_ID_TO_MM, MM_TO_AGENT_ID, type BotSummary } from "@/pages/DashboardPage"
+import { BotDetailPage } from "@/pages/BotDetailPage"
 import { ProjectDetailPage } from "@/pages/ProjectDetailPage"
 
 const EMPTY_DASHBOARD: DashboardData = {
@@ -42,6 +44,7 @@ function App() {
   const [dashboardHistory, setDashboardHistory] = useState<string[]>([])
   const [dashboardBotPoints, setDashboardBotPoints] = useState<string[]>([])
   const [dashboardServerPoints, setDashboardServerPoints] = useState<string[]>([])
+  const [dashboardHistorySummaries, setDashboardHistorySummaries] = useState<{ time: string; bots: number | null; srvs: number | null }[]>([])
   const [dashboardAsOf, setDashboardAsOf] = useState<string | null>(null)
 
   // Projects state
@@ -81,6 +84,7 @@ function App() {
       setDashboardHistory(history.points ?? [])
       setDashboardBotPoints(history.botPoints ?? [])
       setDashboardServerPoints(history.serverPoints ?? [])
+      setDashboardHistorySummaries(history.summaries ?? [])
     } catch (error) {
       showError(error)
     } finally {
@@ -194,6 +198,7 @@ function App() {
             historyPoints={dashboardHistory}
             historyBotPoints={dashboardBotPoints}
             historyServerPoints={dashboardServerPoints}
+            historySummaries={dashboardHistorySummaries}
             selectedAsOf={dashboardAsOf}
             onSelectAsOf={setDashboardAsOf}
             stats={stats}
@@ -202,6 +207,15 @@ function App() {
             projectsLoading={overviewLoading}
             onCreateProject={() => setShowCreate(true)}
             onOpenProject={(slug) => navigateToRoute({ page: "project", slug })}
+            onOpenBot={(agentId) => navigateToRoute({ page: "bot", agentId })}
+          />
+        )}
+        {route.page === "bot" && (
+          <BotDetailPage
+            agent={dashboard.agents?.find(a => a.id === route.agentId) ?? null}
+            agentId={route.agentId}
+            onBack={() => navigateToRoute({ page: "home" })}
+            mmUsername={AGENT_ID_TO_MM[route.agentId] ?? route.agentId}
           />
         )}
         {route.page === "project" && (

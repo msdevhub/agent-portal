@@ -222,3 +222,63 @@ html {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* ═══════════ Mobile Hardening ═══════════ */
+
+/* Disable text selection on interactive elements (mobile) */
+@media (max-width: 639px) {
+  button, a, [role="button"], .no-select {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/* Prevent pull-to-refresh on mobile */
+html, body {
+  overscroll-behavior: none;
+}
+
+/* Prevent double-tap zoom on buttons */
+button, a, [role="button"] {
+  touch-action: manipulation;
+}
+
+/* Safe area padding for notched devices */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .pb-safe {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+  .pb-safe-lg {
+    padding-bottom: max(2rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* iOS rubber-band scroll fix for fixed overlays */
+.scroll-lock {
+  overflow: hidden;
+  position: fixed;
+  width: 100%;
+}
+
+/* Smooth momentum scrolling on iOS */
+.momentum-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
+
+/* Reduce motion for users who prefer it */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Mobile tap highlight removal */
+@media (max-width: 639px) {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+}

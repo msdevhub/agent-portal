@@ -10,10 +10,49 @@ const changelogCache = new Map();
 const SUPABASE_URL = 'https://db.dora.restry.cn';
 const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJzZXJ2aWNlX3JvbGUiLAogICAgImlzcyI6ICJzdXBhYmFzZS1kZW1vIiwKICAgICJpYXQiOiAxNjQxNzY5MjAwLAogICAgImV4cCI6IDE3OTk1MzU2MDAKfQ.DaYlNEoUrrEn2Ig7tqibS-PHK5vgusbcbo7X36XVt4Q';
 
-// ── Portal Ops Bot (Mattermost DM) ──
-const PORTAL_OPS_TOKEN = process.env.PORTAL_OPS_TOKEN || 'w5fcix3aciynxqypp1rdzswtyh';
-const PORTAL_OPS_USER_ID = 'n9izn6p15fboubx5reri5ftx6w';
+// ── Portal Chat (Mattermost DM as @dora via admin token) ──
+const MM_ADMIN_TOKEN = process.env.MM_ADMIN_TOKEN || 'ygw5qt86hi8p3r917j7khe3ogc';
+const MM_ADMIN_USER_ID = '8zzs18ha4fdhf8jt8ybm61eqdw'; // @dora
+// Legacy aliases for backward compat
+const PORTAL_OPS_TOKEN = MM_ADMIN_TOKEN;
+const PORTAL_OPS_USER_ID = MM_ADMIN_USER_ID;
 const MM_BASE_URL = process.env.MM_BASE_URL || 'https://mm.dora.restry.cn';
+
+// ── MM Bot User Cache (for merging daily_reports bots) ──
+const mmBotUserCache = {};
+async function loadMmBotUsers() {
+  try {
+    const res = await fetch(`${MM_BASE_URL}/api/v4/users?per_page=200`, {
+      headers: { Authorization: `Bearer ${MM_ADMIN_TOKEN}` },
+    });
+    if (!res.ok) { console.error('[MM] Failed to load bot users:', res.status); return; }
+    const users = await res.json();
+    const bots = users.filter(u => u.is_bot);
+    for (const b of bots) {
+      mmBotUserCache[b.username] = { id: b.id, nickname: b.nickname || b.username };
+    }
+    // agent_id → mm_username mappings (from pusher.py)
+    const AGENT_ID_MAP = {
+      'rabbit': 'ottor-pc-cloud-bot',
+      'clawline-channel': 'channelbot',
+      'clawline-client-web': 'webbot',
+      'clawline-gateway': 'gatewaybot',
+      'research': 'researcher',
+      'research-craft': 'craftbot',
+      'research-portal': 'portalbot',
+      'research-bi': 'bibot',
+    };
+    for (const [agentId, mmUsername] of Object.entries(AGENT_ID_MAP)) {
+      if (mmBotUserCache[mmUsername] && !mmBotUserCache[agentId]) {
+        mmBotUserCache[agentId] = mmBotUserCache[mmUsername];
+      }
+    }
+    console.log(`[MM] Loaded ${Object.keys(mmBotUserCache).length} bot user entries`);
+  } catch (e) {
+    console.error('[MM] Error loading bot users:', e.message);
+  }
+}
+loadMmBotUsers();
 
 const STAGE_LABELS = {
   idea: '想法',
@@ -195,13 +234,14 @@ app.post('/api/init-db', async (req, res) => {
     `);
 
     await dbExec(`
-      CREATE TABLE IF NOT EXISTS daily_reports (
+      CREATE TABLE IF NOT EXISTS "AP_daily_reports" (
         id SERIAL PRIMARY KEY,
-        date DATE NOT NULL UNIQUE,
+        date DATE NOT NULL,
         content TEXT NOT NULL,
         agent_id TEXT DEFAULT 'research',
         created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(date, agent_id)
       );
     `);
 
@@ -209,7 +249,7 @@ app.post('/api/init-db', async (req, res) => {
     await dbExec(`CREATE INDEX IF NOT EXISTS "AP_notes_project_id_idx" ON "AP_notes"(project_id);`);
     await dbExec(`CREATE INDEX IF NOT EXISTS "AP_artifacts_project_id_idx" ON "AP_artifacts"(project_id);`);
     await dbExec(`CREATE INDEX IF NOT EXISTS "AP_timeline_project_id_idx" ON "AP_timeline"(project_id, created_at);`);
-    await dbExec(`CREATE INDEX IF NOT EXISTS daily_reports_date_idx ON daily_reports(date DESC);`);
+    await dbExec(`CREATE INDEX IF NOT EXISTS "AP_daily_reports_date_idx" ON "AP_daily_reports"(date DESC);`);
 
     res.json({ ok: true, message: 'Tables created' });
   } catch (error) {
@@ -261,33 +301,22 @@ app.get('/api/dashboard/history', async (req, res) => {
   try {
     const limit = Number(req.query.limit || 120);
     const rows = await dbQuery(`
-      SELECT snapshot_time AS ts, 'bot' AS source FROM "AP_agent_checks"
-      UNION
       SELECT snapshot_time AS ts, 'server' AS source FROM "AP_server_snapshots"
       ORDER BY ts DESC
       LIMIT ${limit}
     `);
-    // Deduplicate by timestamp + source, group into bot/server arrays
-    const botPoints = [];
     const serverPoints = [];
-    const seenBot = new Set();
     const seenServer = new Set();
     for (const row of rows ?? []) {
       const iso = row.ts ? new Date(row.ts).toISOString() : null;
       if (!iso) continue;
-      if (row.source === 'bot' && !seenBot.has(iso)) {
-        seenBot.add(iso);
-        botPoints.push(iso);
-      }
-      if (row.source === 'server' && !seenServer.has(iso)) {
+      if (!seenServer.has(iso)) {
         seenServer.add(iso);
         serverPoints.push(iso);
       }
     }
-    // Also provide merged deduplicated points for backward compat
-    const allSet = new Set([...botPoints, ...serverPoints]);
-    const points = [...allSet].sort((a, b) => b.localeCompare(a));
-    res.json({ points, botPoints, serverPoints });
+    const points = [...serverPoints];
+    res.json({ points, botPoints: [], serverPoints });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -298,11 +327,11 @@ app.get('/api/dashboard', async (req, res) => {
     const at = req.query.at ? String(req.query.at) : null;
     const timeFilter = at ? `WHERE snapshot_time <= '${esc(at)}'` : '';
 
-    const [sites, containers, crons, agents, servers] = await Promise.all([
+    const [sites, containers, crons, bots, servers] = await Promise.all([
       dbQuery(`SELECT DISTINCT ON (name, kind) * FROM "AP_site_checks" ${timeFilter} ORDER BY name, kind, snapshot_time DESC`),
       dbQuery(`SELECT DISTINCT ON (name) * FROM "AP_container_checks" ${timeFilter} ORDER BY name, snapshot_time DESC`),
       dbQuery(`SELECT DISTINCT ON (job_id) * FROM "AP_cron_checks" ${timeFilter} ORDER BY job_id, snapshot_time DESC`),
-      dbQuery(`SELECT DISTINCT ON (agent_id) * FROM "AP_agent_checks" ${timeFilter} ORDER BY agent_id, snapshot_time DESC`),
+      dbQuery(`SELECT * FROM "AP_bots" ORDER BY agent_id`),
       getLatestServerSnapshots(at),
     ]);
 
@@ -320,20 +349,21 @@ app.get('/api/dashboard', async (req, res) => {
       schedule: c.schedule, model: c.model, lastStatus: c.last_status,
       lastRun: c.last_run, nextRun: c.next_run, consecutiveErrors: c.consecutive_errors,
     }));
-    const agentList = (agents ?? []).map(a => ({
+    const agentList = (bots ?? []).map(a => ({
       id: a.agent_id, name: a.name, emoji: a.emoji, role: a.role,
       project: a.project_slug, github: a.github_url, mm_user_id: a.mm_user_id,
-      production: a.prod_url ? { url: a.prod_url, status: a.prod_status } : null,
-      dev: a.dev_url ? { url: a.dev_url, status: a.dev_status } : null,
-      container: a.container_name ? { name: a.container_name, running: a.container_running, status: a.container_status } : null,
-      crons: { total: a.cron_total, ok: a.cron_ok, error: a.cron_error, jobs: a.cron_jobs ?? [] },
-      tasks: { pending: a.tasks_pending, done: a.tasks_done, total: a.tasks_total },
+      mm_username: a.mm_username,
+      production: a.prod_url ? { url: a.prod_url } : null,
+      dev: a.dev_url ? { url: a.dev_url } : null,
+      container: null,
+      crons: null,
+      tasks: null,
     }));
 
     const prodUp = productionSites.filter(s => s.status === 200).length;
     const devUp = devServers.filter(s => s.status === 200).length;
-    const latestSnapshot = (agents ?? []).reduce((max, a) => {
-      const t = a.snapshot_time ? new Date(a.snapshot_time).getTime() : 0;
+    const latestSnapshot = (servers ?? []).reduce((max, s) => {
+      const t = s.snapshot_time ? new Date(s.snapshot_time).getTime() : 0;
       return t > max ? t : max;
     }, 0);
 
@@ -359,6 +389,79 @@ app.get('/api/dashboard', async (req, res) => {
   }
 });
 
+// ── Daily Insights API (from AP_daily_insights) ──
+app.get('/api/insights', async (req, res) => {
+  try {
+    const date = req.query.date;
+    let sql;
+    if (date) {
+      sql = `SELECT * FROM "AP_daily_insights" WHERE date = '${esc(date)}' LIMIT 1`;
+    } else {
+      sql = `SELECT * FROM "AP_daily_insights" ORDER BY date DESC LIMIT 1`;
+    }
+    const rows = await dbQuery(sql);
+    if (!rows || rows.length === 0) {
+      return res.json({ things_done: [], needs_attention: [], bot_summaries: [], date: date || null });
+    }
+    const row = rows[0];
+    res.json({
+      date: row.date,
+      things_done: row.things_done ?? [],
+      needs_attention: row.needs_attention ?? [],
+      bot_summaries: row.bot_summaries ?? [],
+      metadata: row.metadata ?? {},
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Daily Insights dates (for time switcher) ──
+app.get('/api/insights/dates', async (req, res) => {
+  try {
+    const rows = await dbQuery(`SELECT date FROM "AP_daily_insights" ORDER BY date DESC LIMIT 30`);
+    res.json((rows ?? []).map(r => r.date));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Daily Report for a specific bot ──
+app.get('/api/reports/:agentId', async (req, res) => {
+  try {
+    const date = req.query.date;
+    let sql;
+    if (date) {
+      sql = `SELECT * FROM "AP_daily_reports" WHERE agent_id = '${esc(req.params.agentId)}' AND date = '${esc(date)}' LIMIT 1`;
+    } else {
+      sql = `SELECT * FROM "AP_daily_reports" WHERE agent_id = '${esc(req.params.agentId)}' ORDER BY date DESC LIMIT 1`;
+    }
+    const rows = await dbQuery(sql);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ error: 'No report found' });
+    }
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Daily Activities for a specific bot ──
+app.get('/api/activities/:agentId', async (req, res) => {
+  try {
+    const date = req.query.date;
+    let dateFilter = '';
+    if (date) {
+      dateFilter = `AND date = '${esc(date)}'`;
+    }
+    const rows = await dbQuery(`SELECT * FROM "AP_daily_activities" WHERE agent_id = '${esc(req.params.agentId)}' ${dateFilter} ORDER BY time ASC`);
+    res.json(rows ?? []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Legacy daily-reports endpoints (now using AP_daily_reports) ──
 app.get('/api/daily-reports', async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(100, Number.parseInt(req.query.limit, 10) || 30));
@@ -367,13 +470,12 @@ app.get('/api/daily-reports', async (req, res) => {
     const whereClause = agentId ? `WHERE agent_id = '${esc(agentId)}'` : '';
     const rows = await dbQuery(`
       SELECT id, date, content, agent_id, created_at, updated_at
-      FROM daily_reports
+      FROM "AP_daily_reports"
       ${whereClause}
       ORDER BY date DESC
       LIMIT ${limit}
       OFFSET ${offset}
     `);
-
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -386,18 +488,15 @@ app.get('/api/daily-reports/:date', async (req, res) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) {
       return res.status(400).json({ error: 'date 格式必须为 YYYY-MM-DD' });
     }
-
     const rows = await dbQuery(`
       SELECT id, date, content, agent_id, created_at, updated_at
-      FROM daily_reports
+      FROM "AP_daily_reports"
       WHERE date = '${esc(date)}'
       LIMIT 1
     `);
-
     if (!rows.length) {
       return res.status(404).json({ error: '日报不存在' });
     }
-
     res.json(rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -413,22 +512,19 @@ app.post('/api/daily-reports', async (req, res) => {
     if (!String(content || '').trim()) {
       return res.status(400).json({ error: 'content 不能为空' });
     }
-
     const rows = await dbQuery(`
-      INSERT INTO daily_reports (date, content, agent_id)
+      INSERT INTO "AP_daily_reports" (date, content, agent_id)
       VALUES (
         '${esc(date)}',
         '${esc(content)}',
         '${esc(agentId || 'research')}'
       )
-      ON CONFLICT (date)
+      ON CONFLICT (date, agent_id)
       DO UPDATE SET
         content = EXCLUDED.content,
-        agent_id = EXCLUDED.agent_id,
         updated_at = NOW()
       RETURNING id, date, content, agent_id, created_at, updated_at
     `);
-
     res.json(rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1363,6 +1459,75 @@ const sseClients = new Set();
 // Track which channels we care about (portalops DM channels)
 const trackedChannels = new Set();
 
+// ── Bot real-time status tracking ──
+// Maps mm_user_id -> { status: 'typing'|'active'|'idle', lastActivity: timestamp, lastMessage: string }
+const botStatus = {};
+const BOT_IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes → idle
+
+// Build reverse lookup: mm_user_id → agent_id (loaded once from AP_bots)
+const mmUserIdToAgentId = {};
+async function loadBotStatusMap() {
+  try {
+    const bots = await dbQuery('SELECT agent_id, mm_user_id, emoji, name FROM "AP_bots" WHERE mm_user_id IS NOT NULL');
+    for (const b of bots) {
+      mmUserIdToAgentId[b.mm_user_id] = { agent_id: b.agent_id, emoji: b.emoji, name: b.name };
+      botStatus[b.mm_user_id] = { status: 'idle', lastActivity: 0, lastMessage: '' };
+    }
+    console.log(`[BotStatus] Loaded ${Object.keys(mmUserIdToAgentId).length} bots for status tracking`);
+  } catch (e) {
+    console.error('[BotStatus] Failed to load:', e.message);
+  }
+}
+
+function updateBotStatus(mmUserId, newStatus, message) {
+  const bot = mmUserIdToAgentId[mmUserId];
+  if (!bot) return; // not a tracked bot
+
+  const prev = botStatus[mmUserId];
+  const now = Date.now();
+  botStatus[mmUserId] = { status: newStatus, lastActivity: now, lastMessage: message || prev?.lastMessage || '' };
+
+  // Broadcast status change
+  if (!prev || prev.status !== newStatus) {
+    broadcastSSE('bot_status', {
+      agent_id: bot.agent_id,
+      mm_user_id: mmUserId,
+      status: newStatus,
+      lastMessage: botStatus[mmUserId].lastMessage,
+      timestamp: now,
+    });
+  }
+}
+
+// Periodically check for idle bots
+setInterval(() => {
+  const now = Date.now();
+  for (const [mmUserId, s] of Object.entries(botStatus)) {
+    if (s.status !== 'idle' && (now - s.lastActivity) > BOT_IDLE_TIMEOUT_MS) {
+      updateBotStatus(mmUserId, 'idle', null);
+    }
+  }
+}, 30000);
+
+// API: Get all bot statuses
+app.get('/api/bots/status', (_req, res) => {
+  const result = [];
+  for (const [mmUserId, s] of Object.entries(botStatus)) {
+    const bot = mmUserIdToAgentId[mmUserId];
+    if (bot) {
+      result.push({
+        agent_id: bot.agent_id,
+        mm_user_id: mmUserId,
+        emoji: bot.emoji,
+        name: bot.name,
+        status: s.status,
+        lastActivity: s.lastActivity,
+        lastMessage: s.lastMessage,
+      });
+    }
+  }
+  res.json(result);
+});
 app.get('/api/ops/stream', (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -1481,9 +1646,25 @@ function scheduleMmReconnect() {
 function handleMmEvent(text) {
   try {
     const evt = JSON.parse(text);
+
+    // Track bot typing events
+    if (evt.event === 'typing') {
+      const userId = evt.data?.user_id || evt.broadcast?.user_id;
+      if (userId && mmUserIdToAgentId[userId]) {
+        updateBotStatus(userId, 'typing', null);
+      }
+    }
+
     if (evt.event === 'posted') {
       const post = JSON.parse(evt.data?.post ?? '{}');
       const channelId = post.channel_id;
+
+      // Track bot posted events (bot just replied → active)
+      if (post.user_id && mmUserIdToAgentId[post.user_id]) {
+        const snippet = (post.message || '').slice(0, 100);
+        updateBotStatus(post.user_id, 'active', snippet);
+      }
+
       // Only forward posts from tracked channels and NOT from portalops itself
       if (channelId && trackedChannels.has(channelId) && post.user_id !== PORTAL_OPS_USER_ID) {
         broadcastSSE('new_message', {
@@ -1559,11 +1740,71 @@ function parseWsFrame(buf) {
   return { opcode, payload: data.toString('utf8'), rest: buf.slice(offset + payloadLen) };
 }
 
+// ── NBA (Next Best Action): Send message to bot by MM username ──
+const NBA_ADMIN_TOKEN = MM_ADMIN_TOKEN;
+
+app.post('/api/nba/send', async (req, res) => {
+  try {
+    const { target_bot, message } = req.body || {};
+    if (!target_bot || !message) {
+      return res.status(400).json({ error: '缺少 target_bot 或 message' });
+    }
+
+    // 1. Resolve MM username → user_id
+    const userRes = await fetch(`${MM_BASE_URL}/api/v4/users/username/${encodeURIComponent(target_bot)}`, {
+      headers: { Authorization: `Bearer ${NBA_ADMIN_TOKEN}` },
+    });
+    if (!userRes.ok) {
+      const err = await userRes.text();
+      return res.status(404).json({ error: `找不到用户 @${target_bot}: ${err.slice(0, 200)}` });
+    }
+    const user = await userRes.json();
+    const targetUserId = user.id;
+
+    // 2. Create / get DM channel between admin bot and target
+    const channelRes = await fetch(`${MM_BASE_URL}/api/v4/channels/direct`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${NBA_ADMIN_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify([PORTAL_OPS_USER_ID, targetUserId]),
+    });
+    if (!channelRes.ok) {
+      const err = await channelRes.text();
+      return res.status(502).json({ error: `创建 DM 频道失败: ${err.slice(0, 200)}` });
+    }
+    const channel = await channelRes.json();
+
+    // 3. Post message
+    const postRes = await fetch(`${MM_BASE_URL}/api/v4/posts`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${NBA_ADMIN_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ channel_id: channel.id, message }),
+    });
+    if (!postRes.ok) {
+      const err = await postRes.text();
+      return res.status(502).json({ error: `发送消息失败: ${err.slice(0, 200)}` });
+    }
+    const post = await postRes.json();
+
+    res.json({ ok: true, post_id: post.id, channel_id: channel.id, target_user_id: targetUserId });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ── Patch /api/ops/send to auto-track channel ──
 const origSendHandler = app._router?.stack; // we'll patch inline instead
 
+// SPA fallback: serve index.html for all non-API routes
+const _spaIndexPath = path.resolve(__dirname, 'dist', 'index.html');
+const _spaIndexHtml = require('fs').readFileSync(_spaIndexPath, 'utf-8');
 app.get('{*path}', (req, res) => {
-  res.sendFile(path.join(STATIC_ROOT, 'index.html'));
+  res.type('html').send(_spaIndexHtml);
 });
 
 app.listen(PORT, () => {
@@ -1579,4 +1820,7 @@ app.listen(PORT, () => {
 
   // Connect to Mattermost WebSocket
   connectMmWebSocket();
+
+  // Load bot status map for real-time tracking
+  loadBotStatusMap();
 });
