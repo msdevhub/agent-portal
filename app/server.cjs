@@ -331,7 +331,7 @@ app.get('/api/dashboard', async (req, res) => {
       dbQuery(`SELECT DISTINCT ON (name, kind) * FROM "AP_site_checks" ${timeFilter} ORDER BY name, kind, snapshot_time DESC`),
       dbQuery(`SELECT DISTINCT ON (name) * FROM "AP_container_checks" ${timeFilter} ORDER BY name, snapshot_time DESC`),
       dbQuery(`SELECT DISTINCT ON (job_id) * FROM "AP_cron_checks" ${timeFilter} ORDER BY job_id, snapshot_time DESC`),
-      dbQuery(`SELECT * FROM "AP_bots" ORDER BY agent_id`),
+      dbQuery(`SELECT b.*, la.last_active FROM "AP_bots" b LEFT JOIN (SELECT agent_id, MAX(date) as last_active FROM "AP_daily_activities" GROUP BY agent_id) la ON b.agent_id = la.agent_id ORDER BY la.last_active DESC NULLS LAST, b.agent_id`),
       getLatestServerSnapshots(at),
     ]);
 
@@ -352,7 +352,7 @@ app.get('/api/dashboard', async (req, res) => {
     const agentList = (bots ?? []).map(a => ({
       id: a.agent_id, name: a.name, emoji: a.emoji, role: a.role,
       project: a.project_slug, github: a.github_url, mm_user_id: a.mm_user_id,
-      mm_username: a.mm_username,
+      mm_username: a.mm_username, last_active: a.last_active || null,
       production: a.prod_url ? { url: a.prod_url } : null,
       dev: a.dev_url ? { url: a.dev_url } : null,
       container: null,
