@@ -331,7 +331,7 @@ app.get('/api/dashboard', async (req, res) => {
       dbQuery(`SELECT DISTINCT ON (name, kind) * FROM "AP_site_checks" ${timeFilter} ORDER BY name, kind, snapshot_time DESC`),
       dbQuery(`SELECT DISTINCT ON (name) * FROM "AP_container_checks" ${timeFilter} ORDER BY name, snapshot_time DESC`),
       dbQuery(`SELECT DISTINCT ON (job_id) * FROM "AP_cron_checks" ${timeFilter} ORDER BY job_id, snapshot_time DESC`),
-      dbQuery(`SELECT b.*, la.last_active FROM "AP_bots" b LEFT JOIN (SELECT agent_id, MAX(date) as last_active FROM "AP_daily_activities" GROUP BY agent_id) la ON b.agent_id = la.agent_id ORDER BY la.last_active DESC NULLS LAST, b.agent_id`),
+      dbQuery(`SELECT b.*, la.last_active FROM "AP_bots" b LEFT JOIN (SELECT agent_id, MAX(date || 'T' || RIGHT("time", 5) || ':00+08:00') as last_active FROM "AP_daily_activities" GROUP BY agent_id) la ON b.agent_id = la.agent_id ORDER BY la.last_active DESC NULLS LAST, b.agent_id`),
       getLatestServerSnapshots(at),
     ]);
 
