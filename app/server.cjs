@@ -461,6 +461,35 @@ app.get('/api/activities/:agentId', async (req, res) => {
   }
 });
 
+// ── Compat: frontend uses /api/daily-activities?agent_id=xxx ──
+app.get('/api/daily-activities', async (req, res) => {
+  try {
+    const agentId = req.query.agent_id;
+    if (!agentId) return res.json([]);
+    const date = req.query.date;
+    let dateFilter = '';
+    if (date) {
+      dateFilter = `AND date = '${esc(date)}'`;
+    }
+    const rows = await dbQuery(`SELECT * FROM "AP_daily_activities" WHERE agent_id = '${esc(agentId)}' ${dateFilter} ORDER BY time ASC`);
+    res.json(rows ?? []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Compat: frontend uses /api/daily-activities/dates?agent_id=xxx ──
+app.get('/api/daily-activities/dates', async (req, res) => {
+  try {
+    const agentId = req.query.agent_id;
+    if (!agentId) return res.json([]);
+    const rows = await dbQuery(`SELECT DISTINCT date FROM "AP_daily_activities" WHERE agent_id = '${esc(agentId)}' ORDER BY date DESC LIMIT 30`);
+    res.json((rows ?? []).map(r => r.date));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ── Legacy daily-reports endpoints (now using AP_daily_reports) ──
 app.get('/api/daily-reports', async (req, res) => {
   try {
