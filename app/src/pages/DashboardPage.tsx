@@ -1217,6 +1217,13 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchiv
 
             {/* Actions */}
             <div className="flex gap-2 pt-1">
+               <button 
+                 onClick={(e) => { e.stopPropagation(); onOpenBot(agent.id, insightDate ?? undefined) }}
+                 className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 py-1.5 text-xs font-semibold text-white transition-colors"
+               >
+                 <FileText className="h-3.5 w-3.5" />
+                 查看详情
+               </button>
                {canMessage && (
                  <button 
                    onClick={(e) => { e.stopPropagation(); onToggle() }}
