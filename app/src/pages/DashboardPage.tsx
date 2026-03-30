@@ -921,7 +921,7 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
 
   const allCards = useMemo(() => {
     if (!botSummaries?.length) return []
-    return botSummaries.map(bs => {
+    const cards = botSummaries.map(bs => {
       const agentId = MM_TO_AGENT_ID[bs.bot] ?? bs.bot
       const existing = agentById.get(agentId)
       // Merge: use existing agent data if available, overlay with summary info
@@ -942,6 +942,13 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
           }
       return card
     })
+    // Sort by last_active DESC (most recently active first)
+    cards.sort((a, b) => {
+      const la = (a as any).last_active ?? ""
+      const lb = (b as any).last_active ?? ""
+      return lb.localeCompare(la)
+    })
+    return cards
   }, [botSummaries, agentById])
 
   const activeCards = allCards.filter(a => !archived.has(a.id))
@@ -1105,6 +1112,12 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchiv
               </div>
               <div className="flex items-center gap-2 text-[11px] text-zinc-500">
                 <span>@{agent.id}</span>
+                {(agent as any).last_active && (
+                  <>
+                    <span>·</span>
+                    <span className="text-zinc-500">{(agent as any).last_active === new Date().toISOString().slice(0, 10) ? "今天活跃" : (agent as any).last_active}</span>
+                  </>
+                )}
                 {tasks && (
                   <>
                     <span>·</span>
