@@ -7,8 +7,6 @@ import {
   Box,
   CheckCircle2,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   Clock,
   Cpu,
   FileText,
@@ -631,11 +629,6 @@ function DailyInsightsCard({ insights: data, dates, selectedDate, onSelectDate }
   const { things_done, needs_attention, stats } = data ?? {}
   const focusItems = things_done?.filter(t => t.is_focus) ?? []
 
-  // Date navigation helpers
-  const dateIdx = selectedDate ? dates.indexOf(selectedDate) : 0
-  const canPrev = dateIdx < dates.length - 1
-  const canNext = dateIdx > 0
-
   const handleNba = async (idx: number, nba: NeedAttention["nba"]) => {
     if (!nba || nbaSending[idx] || nbaSent[idx]) return
     setNbaSending(p => ({ ...p, [idx]: true }))
@@ -668,43 +661,32 @@ function DailyInsightsCard({ insights: data, dates, selectedDate, onSelectDate }
           <ChevronDown className={cn("h-4 w-4 text-zinc-500 transition-transform", !collapsed && "rotate-180")} />
         </button>
 
-        {/* Date picker row */}
+        {/* Date pill tabs */}
         {dates.length > 0 && (
-          <div className="flex items-center gap-2 border-t border-zinc-800/40 px-4 py-2">
-            <button
-              type="button"
-              disabled={!canPrev}
-              onClick={() => canPrev && onSelectDate(dates[dateIdx + 1])}
-              className="rounded-md p-1 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <select
-              value={selectedDate ?? ""}
-              onChange={(e) => onSelectDate(e.target.value)}
-              className="flex-1 appearance-none rounded-md bg-[#18181b] border border-zinc-800 px-2.5 py-1 text-xs text-zinc-200 font-mono text-center cursor-pointer hover:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-emerald-500/40 transition-colors"
-            >
-              {dates.map(d => (
-                <option key={d} value={d}>{d}</option>
-              ))}
-            </select>
-            <button
-              type="button"
-              disabled={!canNext}
-              onClick={() => canNext && onSelectDate(dates[dateIdx - 1])}
-              className="rounded-md p-1 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-            {dateIdx !== 0 && (
-              <button
-                type="button"
-                onClick={() => onSelectDate(dates[0])}
-                className="text-[10px] text-emerald-400 hover:text-emerald-300 whitespace-nowrap transition-colors"
-              >
-                最新
-              </button>
-            )}
+          <div className="border-t border-zinc-800/40 px-3 py-2 overflow-x-auto scrollbar-hide" style={{ WebkitOverflowScrolling: "touch" }}>
+            <div className="flex gap-1.5">
+              {dates.map(d => {
+                const isActive = d === selectedDate
+                // Format: "3/29" style short label
+                const parts = d.split("-")
+                const shortLabel = parts.length === 3 ? `${parseInt(parts[1])}/${parseInt(parts[2])}` : d
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => onSelectDate(d)}
+                    className={cn(
+                      "shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-all whitespace-nowrap",
+                      isActive
+                        ? "bg-emerald-500 text-white shadow-sm shadow-emerald-500/25"
+                        : "bg-zinc-800/60 text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-200"
+                    )}
+                  >
+                    {shortLabel}
+                  </button>
+                )
+              })}
+            </div>
           </div>
         )}
 
@@ -1046,27 +1028,49 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
 }
 
 function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchive, isArchived, botSummary, isVirtual, virtualEmoji, forceExpanded, liveStatus, insightDate }: { agent: DashboardAgent; selected: boolean; onToggle: () => void; onOpenProject: (slug: string) => void; onOpenBot: (agentId: string, date?: string) => void; onArchive: () => void; isArchived: boolean; botSummary?: BotSummary; isVirtual?: boolean; virtualEmoji?: string; forceExpanded?: boolean; liveStatus?: BotStatusEntry; insightDate?: string | null }) {
-  const expanded = forceExpanded ?? false
+  const [localExpanded, setLocalExpanded] = useState(false)
+  const expanded = localExpanded
   const [cronOpen, setCronOpen] = useState(false)
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [detailActivities, setDetailActivities] = useState<any[]>([])
+  const [detailReport, setDetailReport] = useState<string | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
   
   const mmUsername = AGENT_ID_TO_MM[agent.id] ?? agent.id
-  const prod = agent.production
-  const dev = agent.dev
   const container = agent.container
   const crons = agent.crons
   const canMessage = !!agent.mm_user_id
   const tasks = agent.tasks
-  const hasProject = !!agent.project
+
+  // Load detail data when detail section is opened
+  useEffect(() => {
+    if (!detailOpen) return
+    const agentId = agent.id
+    const date = insightDate ?? undefined
+    setDetailLoading(true)
+    Promise.all([
+      import("@/lib/api").then(m => m.fetchDailyActivities(agentId, date)),
+      import("@/lib/api").then(m => m.fetchDailyReports(5, 0, agentId)),
+    ]).then(([activities, reports]) => {
+      setDetailActivities(activities ?? [])
+      setDetailReport(reports?.[0]?.content ?? null)
+    }).catch(() => {}).finally(() => setDetailLoading(false))
+  }, [detailOpen, agent.id, insightDate])
+
+  const handleCardClick = () => {
+    setLocalExpanded(prev => !prev)
+  }
 
   return (
     <>
       <div className={cn(
-        "group relative flex flex-col gap-2.5 rounded-xl border bg-[#111113] transition-all hover:border-zinc-700",
+        "group relative flex flex-col rounded-xl border bg-[#111113] transition-all hover:border-zinc-700",
         selected ? "border-emerald-500/50 bg-emerald-500/5 ring-1 ring-emerald-500/20" : "border-zinc-800/80"
       )}>
-        {/* Layer 1: Summary */}
+        {/* Layer 1: Summary — clickable to expand/collapse */}
         <div 
-          className="flex items-start justify-between gap-2 p-3.5"
+          className="flex items-start justify-between gap-2 p-3.5 cursor-pointer"
+          onClick={handleCardClick}
         >
           <div className="flex items-center gap-2.5">
             <div className="relative">
@@ -1131,6 +1135,7 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchiv
           </div>
           
           <div className="flex items-center gap-2">
+             <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-500 transition-transform", expanded && "rotate-180")} />
              {canMessage && (
                <button onClick={(e) => { e.stopPropagation(); onToggle() }} className={cn(
                  "ml-1 rounded-lg p-1.5 transition",
@@ -1213,14 +1218,6 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchiv
 
             {/* Actions */}
             <div className="flex gap-2 pt-1">
-               <button 
-                 onClick={(e) => { e.stopPropagation(); onOpenBot(agent.id, insightDate ?? undefined) }}
-                 className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 py-1.5 text-xs font-semibold text-white transition-colors"
-               >
-                 <FileText className="h-3.5 w-3.5" />
-                 查看详情
-               </button>
-               
                {canMessage && (
                  <button 
                    onClick={(e) => { e.stopPropagation(); onToggle() }}
@@ -1242,6 +1239,77 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchiv
                >
                  {isArchived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
                </button>
+            </div>
+
+            {/* Inline Detail Accordion */}
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setDetailOpen(!detailOpen) }}
+                className="flex w-full items-center gap-2 rounded-lg border border-zinc-800/50 bg-[#18181b] px-3 py-2 text-xs text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-200 transition-colors"
+              >
+                <FileText className="h-3.5 w-3.5" />
+                <span className="font-medium">活动详情</span>
+                <ChevronDown className={cn("ml-auto h-3 w-3 transition-transform", detailOpen && "rotate-180")} />
+              </button>
+
+              {detailOpen && (
+                <div className="mt-2 space-y-2 animate-in slide-in-from-top-1 duration-200">
+                  {detailLoading ? (
+                    <div className="flex items-center justify-center py-4 text-[11px] text-zinc-500">
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin mr-1.5" />加载中...
+                    </div>
+                  ) : (
+                    <>
+                      {/* Activities list */}
+                      {detailActivities.length > 0 ? (
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider px-1">📋 今日任务 ({detailActivities.length})</div>
+                          <div className="max-h-[300px] overflow-y-auto space-y-1 pr-0.5">
+                            {detailActivities.map((act: any) => {
+                              const statusIcon = act.action === "completed" ? "✅" : act.action === "in_progress" ? "⏳" : act.action === "dropped" ? "❌" : "•"
+                              const statusColor = act.action === "completed" ? "text-emerald-400" : act.action === "in_progress" ? "text-amber-400" : act.action === "dropped" ? "text-rose-400" : "text-zinc-400"
+                              return (
+                                <div key={act.id} className="rounded-md border border-zinc-800/40 bg-[#0c0c0e] px-2.5 py-2">
+                                  <div className="flex items-start gap-1.5">
+                                    <span className="text-xs mt-0.5 shrink-0">{statusIcon}</span>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        {act.time && <span className="text-[9px] font-mono text-zinc-600 tabular-nums">{act.time}</span>}
+                                        <span className={cn("text-[9px] font-semibold uppercase", statusColor)}>{act.action === "completed" ? "完成" : act.action === "in_progress" ? "进行中" : act.action === "dropped" ? "放弃" : act.action}</span>
+                                      </div>
+                                      <div className="text-[11px] text-zinc-300 mt-0.5 leading-relaxed">{act.content}</div>
+                                      {act.detail?.deliverables?.length > 0 && (
+                                        <div className="flex flex-wrap gap-1 mt-1">
+                                          {act.detail.deliverables.map((d: string, i: number) => (
+                                            <code key={i} className="rounded bg-emerald-500/10 border border-emerald-500/20 px-1 py-0.5 text-[9px] text-emerald-300 font-mono">📄 {d}</code>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-center text-[11px] text-zinc-600 py-3">暂无活动数据</div>
+                      )}
+
+                      {/* Report preview */}
+                      {detailReport && (
+                        <div className="rounded-md border border-zinc-800/40 bg-[#0c0c0e] px-3 py-2.5">
+                          <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider mb-1.5">📝 日报摘要</div>
+                          <div className="prose prose-invert prose-sm max-w-none text-[11px] leading-relaxed prose-headings:text-xs prose-headings:text-zinc-200 prose-p:my-1 prose-p:text-zinc-400 prose-li:my-0.5 prose-li:text-zinc-400 prose-code:text-emerald-300 prose-code:text-[10px] max-h-[200px] overflow-y-auto">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{detailReport}</ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
