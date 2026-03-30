@@ -291,3 +291,15 @@ button, a, [role="button"] {
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* Bot card breathing glow for typing state */
+@keyframes breath {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.1);
+    border-color: rgba(16, 185, 129, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.25);
+    border-color: rgba(16, 185, 129, 0.5);
+  }
+}

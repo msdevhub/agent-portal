@@ -1061,11 +1061,19 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchiv
     setLocalExpanded(prev => !prev)
   }
 
+  // Determine card-level status styling
+  const statusStyle = liveStatus?.status === 'typing'
+    ? "border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.15)] animate-[breath_2s_ease-in-out_infinite]"
+    : liveStatus?.status === 'active'
+    ? "border-l-[3px] border-l-emerald-400 border-t-zinc-800/80 border-r-zinc-800/80 border-b-zinc-800/80"
+    : ""
+
   return (
     <>
       <div className={cn(
         "group relative flex flex-col rounded-xl border bg-[#111113] transition-all hover:border-zinc-700",
-        selected ? "border-emerald-500/50 bg-emerald-500/5 ring-1 ring-emerald-500/20" : "border-zinc-800/80"
+        selected ? "border-emerald-500/50 bg-emerald-500/5 ring-1 ring-emerald-500/20" : "border-zinc-800/80",
+        !selected && statusStyle,
       )}>
         {/* Layer 1: Summary — clickable to expand/collapse */}
         <div 
@@ -1084,15 +1092,6 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchiv
                   <Workflow className="h-4.5 w-4.5" />
                 )}
               </div>
-              {/* Live status indicator */}
-              {liveStatus && (
-                <span className={cn(
-                  "absolute -bottom-0.5 -right-0.5 block h-2.5 w-2.5 rounded-full border-2 border-[#111113]",
-                  liveStatus.status === 'typing' && "bg-emerald-400 animate-pulse",
-                  liveStatus.status === 'active' && "bg-sky-400",
-                  liveStatus.status === 'idle' && "bg-zinc-600",
-                )} title={liveStatus.status === 'typing' ? '正在输入...' : liveStatus.status === 'active' ? '活跃' : '空闲'} />
-              )}
             </div>
             <div>
               <div className="flex items-center gap-1.5">
