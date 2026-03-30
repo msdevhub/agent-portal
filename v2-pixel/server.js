@@ -1308,6 +1308,76 @@ const sseClients = new Set();
 // Track which channels we care about (portalops DM channels)
 const trackedChannels = new Set();
 
+// ── Bot real-time status tracking ──
+// Maps mm_user_id -> { status: 'typing'|'active'|'idle', lastActivity: timestamp, lastMessage: string }
+const botStatus = {};
+const BOT_IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes → idle
+
+// Build reverse lookup: mm_user_id → agent_id (loaded once from AP_bots)
+const mmUserIdToAgentId = {};
+async function loadBotStatusMap() {
+  try {
+    const bots = await dbQuery('SELECT agent_id, mm_user_id, emoji, name FROM "AP_bots" WHERE mm_user_id IS NOT NULL');
+    for (const b of bots) {
+      mmUserIdToAgentId[b.mm_user_id] = { agent_id: b.agent_id, emoji: b.emoji, name: b.name };
+      botStatus[b.mm_user_id] = { status: 'idle', lastActivity: 0, lastMessage: '' };
+    }
+    console.log(`[BotStatus] Loaded ${Object.keys(mmUserIdToAgentId).length} bots for status tracking`);
+  } catch (e) {
+    console.error('[BotStatus] Failed to load:', e.message);
+  }
+}
+
+function updateBotStatus(mmUserId, newStatus, message) {
+  const bot = mmUserIdToAgentId[mmUserId];
+  if (!bot) return; // not a tracked bot
+
+  const prev = botStatus[mmUserId];
+  const now = Date.now();
+  botStatus[mmUserId] = { status: newStatus, lastActivity: now, lastMessage: message || prev?.lastMessage || '' };
+
+  // Broadcast status change
+  if (!prev || prev.status !== newStatus) {
+    broadcastSSE('bot_status', {
+      agent_id: bot.agent_id,
+      mm_user_id: mmUserId,
+      status: newStatus,
+      lastMessage: botStatus[mmUserId].lastMessage,
+      timestamp: now,
+    });
+  }
+}
+
+// Periodically check for idle bots
+setInterval(() => {
+  const now = Date.now();
+  for (const [mmUserId, s] of Object.entries(botStatus)) {
+    if (s.status !== 'idle' && (now - s.lastActivity) > BOT_IDLE_TIMEOUT_MS) {
+      updateBotStatus(mmUserId, 'idle', null);
+    }
+  }
+}, 30000);
+
+// API: Get all bot statuses
+app.get('/api/bots/status', (_req, res) => {
+  const result = [];
+  for (const [mmUserId, s] of Object.entries(botStatus)) {
+    const bot = mmUserIdToAgentId[mmUserId];
+    if (bot) {
+      result.push({
+        agent_id: bot.agent_id,
+        mm_user_id: mmUserId,
+        emoji: bot.emoji,
+        name: bot.name,
+        status: s.status,
+        lastActivity: s.lastActivity,
+        lastMessage: s.lastMessage,
+      });
+    }
+  }
+  res.json(result);
+});
+
 app.get('/api/ops/stream', (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -1426,9 +1496,25 @@ function scheduleMmReconnect() {
 function handleMmEvent(text) {
   try {
     const evt = JSON.parse(text);
+
+    // Track bot typing events
+    if (evt.event === 'typing') {
+      const userId = evt.data?.user_id || evt.broadcast?.user_id;
+      if (userId && mmUserIdToAgentId[userId]) {
+        updateBotStatus(userId, 'typing', null);
+      }
+    }
+
     if (evt.event === 'posted') {
       const post = JSON.parse(evt.data?.post ?? '{}');
       const channelId = post.channel_id;
+
+      // Track bot posted events (bot just replied → active)
+      if (post.user_id && mmUserIdToAgentId[post.user_id]) {
+        const snippet = (post.message || '').slice(0, 100);
+        updateBotStatus(post.user_id, 'active', snippet);
+      }
+
       // Only forward posts from tracked channels and NOT from @dora (portal sender)
       if (channelId && trackedChannels.has(channelId) && post.user_id !== MM_ADMIN_USER_ID) {
         broadcastSSE('new_message', {
@@ -1524,4 +1610,7 @@ app.listen(PORT, () => {
 
   // Connect to Mattermost WebSocket
   connectMmWebSocket();
+
+  // Load bot status map for real-time tracking
+  loadBotStatusMap();
 });
