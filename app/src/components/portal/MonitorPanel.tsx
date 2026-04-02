@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Activity, AlertTriangle, ChevronDown, ChevronRight, Clock, Plus, X } from "lucide-react"
+import { Activity, AlertTriangle, ChevronDown, ChevronRight, ExternalLink, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   fetchMonitorUptime,
@@ -28,18 +28,18 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 
-/* ═══════════════════ Types ═══════════════════ */
-
-interface GroupedMonitors {
-  [groupName: string]: MonitorUptime[]
-}
-
 /* ═══════════════════ Helpers ═══════════════════ */
 
 function getUptimeColor(pct: number): string {
   if (pct >= 99) return "text-emerald-400"
   if (pct >= 95) return "text-amber-400"
   return "text-rose-400"
+}
+
+function getUptimeBgColor(pct: number): string {
+  if (pct >= 99) return "bg-emerald-500"
+  if (pct >= 95) return "bg-amber-500"
+  return "bg-rose-500"
 }
 
 function getStatusDotColor(status: number | null, expected: number = 200): string {
@@ -60,7 +60,65 @@ function formatTime(isoStr: string | null): string {
   return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
 }
 
-/* ═══════════════════ UptimeBar ═══════════════════ */
+/** 简化 group_name 为短 tag */
+function getGroupTag(groupName: string | null | undefined): string {
+  const name = groupName ?? "其他"
+  if (name.includes("生产")) return "生产"
+  if (name.includes("开发")) return "开发"
+  if (name.includes("代理")) return "代理"
+  return name.slice(0, 2) // 取前两个字
+}
+
+/** 获取 tag badge 样式 */
+function getGroupTagStyle(groupName: string | null | undefined): string {
+  const name = groupName ?? "其他"
+  if (name.includes("生产")) return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+  if (name.includes("开发")) return "bg-amber-500/20 text-amber-400 border-amber-500/30"
+  if (name.includes("代理")) return "bg-blue-500/20 text-blue-400 border-blue-500/30"
+  return "bg-zinc-500/20 text-zinc-400 border-zinc-500/30"
+}
+
+/** 排序监控项：异常优先 → uptime低优先 → 名字字母序 */
+function sortMonitors(monitors: MonitorUptime[]): MonitorUptime[] {
+  return [...monitors].sort((a, b) => {
+    // 1. 当前状态异常的排前面
+    const aAbnormal = a.last_status !== null && a.last_status !== a.expected_status
+    const bAbnormal = b.last_status !== null && b.last_status !== b.expected_status
+    if (aAbnormal && !bAbnormal) return -1
+    if (!aAbnormal && bAbnormal) return 1
+    
+    // 2. uptime 低的排前面
+    const aUptime = Number(a.uptime_pct) || 100
+    const bUptime = Number(b.uptime_pct) || 100
+    if (aUptime !== bUptime) return aUptime - bUptime
+    
+    // 3. 名字字母序
+    return (a.name ?? "").localeCompare(b.name ?? "")
+  })
+}
+
+/* ═══════════════════ MiniUptimeBar (简化版进度条) ═══════════════════ */
+
+function MiniUptimeBar({ uptimePct }: { uptimePct: number }) {
+  const pct = Math.min(100, Math.max(0, uptimePct))
+  const bgColor = getUptimeBgColor(pct)
+  
+  return (
+    <div className="flex items-center gap-2 min-w-[100px]">
+      <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden">
+        <div
+          className={cn("h-full rounded-full transition-all", bgColor)}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className={cn("text-[11px] tabular-nums font-medium min-w-[42px] text-right", getUptimeColor(pct))}>
+        {pct.toFixed(1)}%
+      </span>
+    </div>
+  )
+}
+
+/* ═══════════════════ UptimeBar (详细7天历史条) ═══════════════════ */
 
 function UptimeBar({ history, expectedStatus }: { history: MonitorHistory[]; expectedStatus: number }) {
   // 45 bars for 7 days (~3.7h per bar)
@@ -77,7 +135,7 @@ function UptimeBar({ history, expectedStatus }: { history: MonitorHistory[]; exp
     for (let i = 0; i < barCount; i++) {
       const start = sevenDaysAgo + i * intervalMs
       const end = start + intervalMs
-      const checks = history.filter(h => {
+      const checks = (history ?? []).filter(h => {
         const t = new Date(h.snapshot_time).getTime()
         return t >= start && t < end
       })
@@ -115,7 +173,7 @@ function ResponseChart({ history }: { history: MonitorHistory[] }) {
     return <div className="text-xs text-zinc-600 py-4">暂无足够的响应时间数据</div>
   }
 
-  const times = history.map(h => h.response_ms ?? 0).filter(t => t > 0)
+  const times = (history ?? []).map(h => h.response_ms ?? 0).filter(t => t > 0)
   if (times.length < 2) {
     return <div className="text-xs text-zinc-600 py-4">暂无响应时间数据</div>
   }
@@ -173,7 +231,7 @@ function MonitorRow({ monitor, expanded, onToggle }: {
     if (expanded && history.length === 0) {
       setHistoryLoading(true)
       fetchMonitorHistory(monitor.monitor_id, 168) // 7 days for bars
-        .then(setHistory)
+        .then(data => setHistory(data ?? []))
         .catch(console.error)
         .finally(() => setHistoryLoading(false))
     }
@@ -182,51 +240,127 @@ function MonitorRow({ monitor, expanded, onToggle }: {
   const uptimePct = Number(monitor.uptime_pct) || 100
   const avgMs = monitor.avg_response_ms != null ? Math.round(monitor.avg_response_ms) : null
 
+  // 处理名字链接点击（阻止冒泡，不触发展开）
+  const handleNameClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+  }
+
   return (
     <div className="rounded-lg border border-zinc-800/60 bg-[#0c0c0e]/50">
-      <button
+      {/* 行头部 - 点击展开/收起 */}
+      <div
         onClick={onToggle}
-        className="w-full text-left p-3 flex items-center gap-3 hover:bg-zinc-800/30 transition-colors"
+        className="w-full text-left p-3 flex items-center gap-3 hover:bg-zinc-800/30 transition-colors cursor-pointer"
       >
-        {expanded ? (
-          <ChevronDown className="h-3.5 w-3.5 text-zinc-500 flex-shrink-0" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 text-zinc-500 flex-shrink-0" />
-        )}
-        <span
-          className={cn("h-2 w-2 rounded-full flex-shrink-0", getStatusDotColor(monitor.last_status, monitor.expected_status))}
-        />
-        <span className="text-sm text-zinc-200 flex-1 truncate">{monitor.name}</span>
-        <span className={cn("text-sm font-medium tabular-nums", getUptimeColor(uptimePct))}>
-          {uptimePct.toFixed(1)}%
-        </span>
-        {avgMs !== null && (
-          <span className="text-[11px] text-zinc-500 tabular-nums ml-2">
-            ⏱ {avgMs}ms
+        {/* 左侧 ~70%: 折叠图标 | 状态圆点 | 名字链接 | tag badge */}
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          {expanded ? (
+            <ChevronDown className="h-3.5 w-3.5 text-zinc-500 flex-shrink-0" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 text-zinc-500 flex-shrink-0" />
+          )}
+          <span
+            className={cn("h-2 w-2 rounded-full flex-shrink-0", getStatusDotColor(monitor.last_status, monitor.expected_status))}
+          />
+          {/* 名字 - 可点击跳转到 target URL */}
+          {monitor.target ? (
+            <a
+              href={monitor.target}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={handleNameClick}
+              className="text-sm text-zinc-200 hover:text-emerald-400 hover:underline truncate transition-colors"
+              title={monitor.target}
+            >
+              {monitor.name}
+            </a>
+          ) : (
+            <span className="text-sm text-zinc-200 truncate">{monitor.name}</span>
+          )}
+          {/* Group tag badge */}
+          <span
+            className={cn(
+              "text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0",
+              getGroupTagStyle(monitor.group_name)
+            )}
+          >
+            {getGroupTag(monitor.group_name)}
           </span>
-        )}
-      </button>
+        </div>
 
+        {/* 右侧 ~30%: MiniUptimeBar */}
+        <div className="flex-shrink-0 w-[130px]">
+          <MiniUptimeBar uptimePct={uptimePct} />
+        </div>
+      </div>
+
+      {/* 展开详情 */}
       {expanded && (
         <div className="px-3 pb-3 pt-0 border-t border-zinc-800/40">
-          <div className="mt-2 text-[11px] text-zinc-500 truncate">
-            {monitor.target}
+          {/* Target URL */}
+          <div className="mt-2 flex items-center gap-1.5 text-[11px] text-zinc-400">
+            <ExternalLink className="h-3 w-3 flex-shrink-0" />
+            <a
+              href={monitor.target ?? "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-zinc-400 hover:text-emerald-400 truncate transition-colors"
+            >
+              {monitor.target ?? "-"}
+            </a>
           </div>
+
+          {/* 环境标签 & 描述 */}
+          <div className="mt-2 flex items-center gap-2 text-[11px]">
+            <span className="text-zinc-500">分组:</span>
+            <span className={cn(
+              "px-1.5 py-0.5 rounded-full border text-[10px]",
+              getGroupTagStyle(monitor.group_name)
+            )}>
+              {monitor.group_name ?? "其他"}
+            </span>
+          </div>
+
+          {/* 7天详细历史条 */}
           {historyLoading ? (
             <div className="text-xs text-zinc-600 py-2">加载中...</div>
           ) : (
             <>
-              <UptimeBar history={history} expectedStatus={monitor.expected_status} />
-              <ResponseChart history={history.slice(-48)} />
-              <div className="mt-2 flex gap-4 text-[10px] text-zinc-500">
-                <span>24h检查: {monitor.checks_24h}</span>
-                <span>24h失败: {monitor.fails_24h}</span>
-                {monitor.last_checked && (
-                  <span>最后检查: {formatTime(monitor.last_checked)}</span>
-                )}
+              <div className="mt-3">
+                <div className="text-[10px] text-zinc-500 mb-1">7天历史</div>
+                <UptimeBar history={history} expectedStatus={monitor.expected_status} />
               </div>
+              <ResponseChart history={(history ?? []).slice(-48)} />
             </>
           )}
+
+          {/* 统计信息 */}
+          <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+            <div className="flex justify-between">
+              <span className="text-zinc-500">24h检查</span>
+              <span className="text-zinc-300">{monitor.checks_24h ?? 0}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-zinc-500">24h失败</span>
+              <span className={cn(
+                (monitor.fails_24h ?? 0) > 0 ? "text-rose-400" : "text-zinc-300"
+              )}>{monitor.fails_24h ?? 0}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-zinc-500">最后检查</span>
+              <span className="text-zinc-300">{formatTime(monitor.last_checked)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-zinc-500">Uptime</span>
+              <span className={getUptimeColor(uptimePct)}>{uptimePct.toFixed(2)}%</span>
+            </div>
+            {avgMs !== null && (
+              <div className="flex justify-between">
+                <span className="text-zinc-500">平均响应</span>
+                <span className="text-zinc-300">{avgMs}ms</span>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -244,7 +378,7 @@ function IncidentsList({ incidents }: { incidents: Incident[] }) {
 
   return (
     <div className="space-y-1.5">
-      {incidents.slice(0, 5).map(inc => (
+      {(incidents ?? []).slice(0, 5).map(inc => (
         <div key={inc.id} className="flex items-center gap-2 text-xs">
           <span className={inc.resolved_at ? "text-emerald-400" : "text-rose-400"}>
             {inc.resolved_at ? "🟢" : "🔴"}
@@ -462,23 +596,10 @@ export function MonitorPanel() {
     loadData()
   }, [loadData])
 
-  const groupedMonitors = useMemo<GroupedMonitors>(() => {
-    const grouped: GroupedMonitors = {}
-    for (const m of uptimeData) {
-      const group = m.group_name || "其他"
-      if (!grouped[group]) grouped[group] = []
-      grouped[group].push(m)
-    }
-    return grouped
+  // 扁平列表 + 排序（异常优先 → uptime低优先 → 名字字母序）
+  const sortedMonitors = useMemo(() => {
+    return sortMonitors(uptimeData ?? [])
   }, [uptimeData])
-
-  // Priority order for groups
-  const groupOrder = ["生产环境", "开发环境", "代理节点", "其他"]
-  const sortedGroups = Object.keys(groupedMonitors).sort((a, b) => {
-    const ai = groupOrder.indexOf(a)
-    const bi = groupOrder.indexOf(b)
-    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
-  })
 
   if (loading) {
     return (
@@ -503,26 +624,20 @@ export function MonitorPanel() {
       </div>
 
       <div className="mt-4 space-y-4">
-        {sortedGroups.length === 0 ? (
+        {/* 扁平监控列表 */}
+        {sortedMonitors.length === 0 ? (
           <div className="text-sm text-zinc-600">暂无监控项</div>
         ) : (
-          sortedGroups.map(group => (
-            <div key={group}>
-              <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
-                {group}
-              </div>
-              <div className="space-y-1.5">
-                {(groupedMonitors[group] ?? []).map(m => (
-                  <MonitorRow
-                    key={m.monitor_id}
-                    monitor={m}
-                    expanded={expandedId === m.monitor_id}
-                    onToggle={() => setExpandedId(prev => prev === m.monitor_id ? null : m.monitor_id)}
-                  />
-                ))}
-              </div>
-            </div>
-          ))
+          <div className="space-y-1.5">
+            {sortedMonitors.map(m => (
+              <MonitorRow
+                key={m.monitor_id}
+                monitor={m}
+                expanded={expandedId === m.monitor_id}
+                onToggle={() => setExpandedId(prev => prev === m.monitor_id ? null : m.monitor_id)}
+              />
+            ))}
+          </div>
         )}
 
         {/* Recent Incidents */}
