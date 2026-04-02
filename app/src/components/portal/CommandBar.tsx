@@ -77,9 +77,93 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
   const [expanded, setExpanded] = useState(false)
   const [projectInfoOpen, setProjectInfoOpen] = useState(false)
   
+  // Mobile bottom sheet state
+  type SheetSnap = 'collapsed' | 'half' | 'full'
+  const [sheetSnap, setSheetSnap] = useState<SheetSnap>('collapsed')
+  const [isMobile, setIsMobile] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragHeight, setDragHeight] = useState<number | null>(null)
+  const dragStartY = useRef(0)
+  const dragStartHeight = useRef(0)
+
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
-  const inputRef = useRef<HTMLInputElement | null>(null)
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
+
+  // Detect mobile
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 640)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+
+  // Snap point heights
+  const getSnapHeight = useCallback((snap: SheetSnap) => {
+    const vh = window.innerHeight
+    switch (snap) {
+      case 'collapsed': return vh * 0.15
+      case 'half': return vh * 0.5
+      case 'full': return vh * 0.85
+    }
+  }, [])
+
+  const findNearestSnap = useCallback((h: number): SheetSnap | 'close' => {
+    const vh = window.innerHeight
+    const closeThreshold = vh * 0.08
+    if (h < closeThreshold) return 'close'
+    const snaps: SheetSnap[] = ['collapsed', 'half', 'full']
+    let best = snaps[0]
+    let bestDist = Math.abs(h - getSnapHeight(snaps[0]))
+    for (const s of snaps) {
+      const d = Math.abs(h - getSnapHeight(s))
+      if (d < bestDist) { best = s; bestDist = d }
+    }
+    return best
+  }, [getSnapHeight])
+
+  // Touch handlers for drag handle
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (!isMobile) return
+    setIsDragging(true)
+    dragStartY.current = e.touches[0].clientY
+    dragStartHeight.current = getSnapHeight(sheetSnap)
+  }, [isMobile, sheetSnap, getSnapHeight])
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!isDragging) return
+    const dy = dragStartY.current - e.touches[0].clientY
+    const newH = Math.max(0, Math.min(window.innerHeight * 0.9, dragStartHeight.current + dy))
+    setDragHeight(newH)
+  }, [isDragging])
+
+  const handleTouchEnd = useCallback(() => {
+    if (!isDragging) return
+    setIsDragging(false)
+    if (dragHeight !== null) {
+      const snap = findNearestSnap(dragHeight)
+      if (snap === 'close') {
+        setDragHeight(null)
+        onClearTarget()
+        setDirectChatActive(false)
+        setExpanded(false)
+        return
+      }
+      setSheetSnap(snap)
+      setExpanded(snap !== 'collapsed')
+    }
+    setDragHeight(null)
+  }, [isDragging, dragHeight, findNearestSnap, onClearTarget])
+
+  // Auto-resize textarea
+  const autoResize = useCallback(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    const lineHeight = 20
+    const maxH = lineHeight * 5 + 12 // 5 lines + padding
+    el.style.height = Math.min(el.scrollHeight, maxH) + 'px'
+  }, [])
 
   // Fetch default bot from portal settings
   const [defaultBotSetting, setDefaultBotSetting] = useState<{ agent_id: string; name: string; emoji: string; mm_user_id: string } | null>(null)
@@ -112,8 +196,9 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
   useEffect(() => {
     if (targets.length > 0 || directChatActive) {
       setExpanded(true)
+      if (isMobile) setSheetSnap('half')
     }
-  }, [targets.length, directChatActive])
+  }, [targets.length, directChatActive, isMobile])
 
   // Prefill input when a target with prefill text is added
   useEffect(() => {
@@ -271,10 +356,16 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
     }
   }, [targets, primaryTarget, activeTargetKey, input, sending, activeChat.channelId])
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       void handleSend()
+      // Reset textarea height after send
+      setTimeout(() => {
+        if (inputRef.current) {
+          inputRef.current.style.height = 'auto'
+        }
+      }, 0)
     }
   }
 
@@ -283,7 +374,7 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
     return (
       <div className="fixed inset-x-0 bottom-0 z-50 pointer-events-none p-4 flex justify-center">
         <button
-          onClick={() => { setDirectChatActive(true); setExpanded(true); setTimeout(() => inputRef.current?.focus(), 150); }}
+          onClick={() => { setDirectChatActive(true); setExpanded(true); if (isMobile) setSheetSnap('half'); setTimeout(() => inputRef.current?.focus(), 150); }}
           className="pointer-events-auto shadow-xl shadow-black/40 flex items-center gap-2 rounded-full border border-zinc-700 bg-[#18181b] px-4 py-2.5 text-sm font-medium text-zinc-300 hover:border-emerald-500/50 hover:text-emerald-300 hover:scale-105 transition-all"
         >
           <MessageSquare className="h-4 w-4" />
@@ -293,13 +384,26 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
     )
   }
 
+  // Mobile sheet height
+  const mobileSheetHeight = isMobile
+    ? (isDragging && dragHeight !== null ? dragHeight : getSnapHeight(sheetSnap))
+    : undefined
+
+  const showMessages = isMobile ? (sheetSnap !== 'collapsed' || isDragging) : expanded
+
   return (
     <div className={cn(
       "fixed inset-x-0 bottom-0 z-50 transition-all duration-300",
-      expanded ? "h-[85vh] sm:h-[600px]" : "h-auto"
+      !isMobile && (expanded ? "h-[85vh] sm:h-[600px]" : "h-auto")
     )}>
-      {/* Backdrop for mobile full screen */}
-      {expanded && (
+      {/* Backdrop for mobile */}
+      {isMobile && (sheetSnap === 'half' || sheetSnap === 'full') && (
+        <div 
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+          onClick={() => { setSheetSnap('collapsed'); setExpanded(false) }}
+        />
+      )}
+      {!isMobile && expanded && (
         <div 
           className="absolute inset-0 bg-black/60 backdrop-blur-sm sm:hidden"
           onClick={() => setExpanded(false)}
@@ -307,7 +411,24 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
       )}
 
       <div className="flex h-full flex-col justify-end">
-        <div className="mx-auto w-full max-w-3xl overflow-hidden border border-b-0 border-zinc-700/60 bg-[#111113]/95 shadow-2xl backdrop-blur-xl sm:mx-auto sm:mb-0">
+        <div
+          className={cn(
+            "mx-auto w-full max-w-3xl overflow-hidden border border-b-0 border-zinc-700/60 bg-[#111113]/95 shadow-2xl backdrop-blur-xl sm:mx-auto sm:mb-0",
+            isMobile && !isDragging && "transition-[max-height] duration-300 ease-out"
+          )}
+          style={isMobile ? { maxHeight: mobileSheetHeight, display: 'flex', flexDirection: 'column' } : undefined}
+        >
+          {/* Mobile drag handle */}
+          {isMobile && (
+            <div
+              className="flex justify-center py-2 cursor-grab active:cursor-grabbing touch-none"
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+            >
+              <div className="h-1 w-10 rounded-full bg-zinc-500" />
+            </div>
+          )}
           
           {/* Header */}
           <div className="flex items-center justify-between border-b border-zinc-800/60 px-4 py-3 bg-[#18181b]/50">
@@ -404,7 +525,7 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
           )}
 
           {/* Messages Area */}
-          {expanded && (
+          {(isMobile ? showMessages : expanded) && (
             <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-3 space-y-0.5 min-h-[300px] max-h-[calc(85vh-130px)] sm:max-h-[460px]">
               {historyLoading && (
                 <div className="flex justify-center py-4">
@@ -509,20 +630,28 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
               </div>
             )}
 
-            <div className="flex gap-2">
-              <input
+            <div className="flex gap-2 items-end">
+              <textarea
                 ref={inputRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => { setInput(e.target.value); autoResize() }}
                 onKeyDown={handleKeyDown}
+                onFocus={() => { if (isMobile && sheetSnap === 'collapsed') { setSheetSnap('half'); setExpanded(true) } }}
                 placeholder={targets.length > 1 ? `发送给 ${targets.length} 个目标...` : "输入消息..."}
-                className="flex-1 rounded-xl border border-zinc-700 bg-[#18181b] px-4 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/20"
+                rows={1}
+                className="flex-1 rounded-xl border border-zinc-700 bg-[#18181b] px-4 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/20 resize-none overflow-y-auto"
+                style={{ maxHeight: 112 }}
                 autoFocus
               />
               <button
-                onClick={() => void handleSend()}
+                onClick={() => { void handleSend(); if (inputRef.current) inputRef.current.style.height = 'auto' }}
                 disabled={!input.trim() || sending}
-                className="inline-flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-2 text-white shadow-lg shadow-emerald-900/20 transition hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                className={cn(
+                  "inline-flex items-center justify-center rounded-xl px-4 py-2 text-white shadow-lg transition",
+                  input.trim()
+                    ? "bg-emerald-600 shadow-emerald-900/20 hover:bg-emerald-500"
+                    : "bg-zinc-700 shadow-none cursor-not-allowed opacity-50"
+                )}
               >
                 {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
               </button>
