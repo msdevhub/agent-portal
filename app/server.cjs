@@ -187,6 +187,7 @@ function getArtifactId(req) {
 
 app.post('/api/init-db', async (req, res) => {
   try {
+    // -- 1. Core project management --
     await dbExec(`
       CREATE TABLE IF NOT EXISTS "AP_projects" (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -196,6 +197,9 @@ app.post('/api/init-db', async (req, res) => {
         stage TEXT DEFAULT 'question',
         status TEXT DEFAULT 'active',
         emoji TEXT DEFAULT '🔬',
+        tags TEXT[] DEFAULT ARRAY[]::TEXT[],
+        agent_id TEXT DEFAULT 'ottor',
+        metadata JSONB DEFAULT '{}'::jsonb,
         created_at TIMESTAMPTZ DEFAULT now(),
         updated_at TIMESTAMPTZ DEFAULT now()
       );
@@ -250,14 +254,13 @@ app.post('/api/init-db', async (req, res) => {
     `);
 
     await dbExec(`
-      CREATE TABLE IF NOT EXISTS "AP_daily_reports" (
-        id SERIAL PRIMARY KEY,
-        date DATE NOT NULL,
-        content TEXT NOT NULL,
-        agent_id TEXT DEFAULT 'research',
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(date, agent_id)
+      CREATE TABLE IF NOT EXISTS "AP_project_actions" (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id UUID REFERENCES "AP_projects"(id),
+        action TEXT NOT NULL,
+        next_action TEXT,
+        reason TEXT,
+        created_at TIMESTAMPTZ DEFAULT now()
       );
     `);
 
@@ -265,9 +268,22 @@ app.post('/api/init-db', async (req, res) => {
     await dbExec(`CREATE INDEX IF NOT EXISTS "AP_notes_project_id_idx" ON "AP_notes"(project_id);`);
     await dbExec(`CREATE INDEX IF NOT EXISTS "AP_artifacts_project_id_idx" ON "AP_artifacts"(project_id);`);
     await dbExec(`CREATE INDEX IF NOT EXISTS "AP_timeline_project_id_idx" ON "AP_timeline"(project_id, created_at);`);
-    await dbExec(`CREATE INDEX IF NOT EXISTS "AP_daily_reports_date_idx" ON "AP_daily_reports"(date DESC);`);
 
-    // Timeline: granular L1 events per bot per day (distinct from L1.5 aggregated tasks in AP_daily_activities)
+    // -- 2. Digest Pipeline tables --
+    await dbExec(`
+      CREATE TABLE IF NOT EXISTS "AP_daily_activities" (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id TEXT NOT NULL,
+        date DATE NOT NULL,
+        time TEXT,
+        action TEXT,
+        content TEXT,
+        detail JSONB,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+    await dbExec(`CREATE INDEX IF NOT EXISTS idx_daily_activities_agent_date ON "AP_daily_activities" (agent_id, date);`);
+
     await dbExec(`
       CREATE TABLE IF NOT EXISTS "AP_daily_timeline" (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -284,7 +300,156 @@ app.post('/api/init-db', async (req, res) => {
     `);
     await dbExec(`CREATE INDEX IF NOT EXISTS idx_daily_timeline_agent_date ON "AP_daily_timeline" (agent_id, date);`);
 
-    res.json({ ok: true, message: 'Tables created' });
+    await dbExec(`
+      CREATE TABLE IF NOT EXISTS "AP_daily_reports" (
+        id SERIAL PRIMARY KEY,
+        date DATE NOT NULL,
+        content TEXT NOT NULL,
+        agent_id TEXT DEFAULT 'research',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(date, agent_id)
+      );
+    `);
+    await dbExec(`CREATE INDEX IF NOT EXISTS "AP_daily_reports_date_idx" ON "AP_daily_reports"(date DESC);`);
+
+    await dbExec(`
+      CREATE TABLE IF NOT EXISTS "AP_daily_insights" (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        date DATE NOT NULL UNIQUE,
+        things_done JSONB DEFAULT '[]'::jsonb,
+        needs_attention JSONB DEFAULT '[]'::jsonb,
+        bot_summaries JSONB DEFAULT '{}'::jsonb,
+        metadata JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+    await dbExec(`CREATE INDEX IF NOT EXISTS idx_daily_insights_date ON "AP_daily_insights" (date DESC);`);
+
+    // -- 3. Bot registry --
+    await dbExec(`
+      CREATE TABLE IF NOT EXISTS "AP_bots" (
+        agent_id TEXT PRIMARY KEY,
+        name TEXT,
+        emoji TEXT DEFAULT '🤖',
+        mm_user_id TEXT,
+        mm_username TEXT,
+        role TEXT,
+        server TEXT,
+        project_slug TEXT,
+        github_url TEXT,
+        prod_url TEXT,
+        dev_url TEXT,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+
+    // -- 4. AI project tracking (Kanban) --
+    await dbExec(`
+      CREATE TABLE IF NOT EXISTS "AP_projects_v2" (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL,
+        description TEXT,
+        status TEXT DEFAULT 'discovering',
+        first_seen DATE,
+        last_active DATE,
+        involved_bots TEXT[],
+        primary_bot TEXT,
+        milestones JSONB DEFAULT '[]'::jsonb,
+        next_actions JSONB DEFAULT '[]'::jsonb,
+        deliverables JSONB DEFAULT '[]'::jsonb,
+        tags TEXT[],
+        user_notes TEXT,
+        auto_generated BOOLEAN DEFAULT TRUE,
+        merged_into UUID,
+        sort_order INTEGER DEFAULT 0
+      );
+    `);
+
+    // -- 5. Infrastructure monitoring --
+    await dbExec(`
+      CREATE TABLE IF NOT EXISTS "AP_server_snapshots" (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        snapshot_time TIMESTAMPTZ NOT NULL,
+        collector TEXT NOT NULL DEFAULT 'quokka',
+        name TEXT NOT NULL,
+        ip TEXT,
+        internal_ip TEXT,
+        region TEXT,
+        cloud TEXT,
+        resource_group TEXT,
+        role TEXT,
+        tags JSONB DEFAULT '[]'::jsonb,
+        os TEXT,
+        cpu_cores INTEGER,
+        memory_total_mb INTEGER,
+        memory_used_mb INTEGER,
+        disk_total_gb INTEGER,
+        disk_used_gb INTEGER,
+        disk_usage_pct INTEGER,
+        uptime_seconds BIGINT,
+        ssh_port INTEGER DEFAULT 18822,
+        ssh_user TEXT,
+        ssh_reachable BOOLEAN,
+        services JSONB DEFAULT '[]'::jsonb,
+        listening_ports JSONB DEFAULT '[]'::jsonb,
+        alerts JSONB DEFAULT '[]'::jsonb,
+        extra JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+
+    await dbExec(`
+      CREATE TABLE IF NOT EXISTS "AP_site_checks" (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        project_slug TEXT,
+        kind TEXT NOT NULL,
+        http_status INTEGER,
+        port INTEGER,
+        snapshot_time TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+    await dbExec(`CREATE INDEX IF NOT EXISTS idx_site_checks_name ON "AP_site_checks" (name, kind, snapshot_time DESC);`);
+    await dbExec(`CREATE INDEX IF NOT EXISTS idx_site_checks_time ON "AP_site_checks" (snapshot_time DESC);`);
+
+    await dbExec(`
+      CREATE TABLE IF NOT EXISTS "AP_container_checks" (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        image TEXT,
+        status_text TEXT,
+        running BOOLEAN,
+        ports TEXT,
+        snapshot_time TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+    await dbExec(`CREATE INDEX IF NOT EXISTS idx_container_checks_name ON "AP_container_checks" (name, snapshot_time DESC);`);
+    await dbExec(`CREATE INDEX IF NOT EXISTS idx_container_checks_time ON "AP_container_checks" (snapshot_time DESC);`);
+
+    await dbExec(`
+      CREATE TABLE IF NOT EXISTS "AP_cron_checks" (
+        id SERIAL PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        name TEXT,
+        agent_id TEXT,
+        enabled BOOLEAN,
+        schedule TEXT,
+        model TEXT,
+        last_status TEXT,
+        last_run TIMESTAMPTZ,
+        next_run TIMESTAMPTZ,
+        consecutive_errors INTEGER DEFAULT 0,
+        snapshot_time TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+    await dbExec(`CREATE INDEX IF NOT EXISTS idx_cron_checks_job ON "AP_cron_checks" (job_id, snapshot_time DESC);`);
+    await dbExec(`CREATE INDEX IF NOT EXISTS idx_cron_checks_time ON "AP_cron_checks" (snapshot_time DESC);`);
+
+    res.json({ ok: true, message: 'All 16 tables created/verified' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1896,6 +2061,14 @@ app.post('/api/nba/send', async (req, res) => {
 // Data lives in AP_projects table; metadata jsonb contains involved_bots, milestones, etc.
 // We flatten metadata into top-level fields for the frontend.
 
+// Helper: safely convert date to YYYY-MM-DD string (handles Date objects from PG and strings from Supabase REST)
+function toDateStr(v) {
+  if (!v) return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === 'string') return v.slice(0, 10);
+  return null;
+}
+
 function flattenAPProject(row) {
   const m = row.metadata || {};
   // Derive health from status if not explicitly set
@@ -1923,9 +2096,9 @@ function flattenAPProject(row) {
     current_summary: m.current_summary || (latestMilestone ? latestMilestone.event : row.description) || null,
     responsible_bot: m.responsible_bot || m.primary_bot || row.agent_id || null,
     recent_events: recentEvents,
-    last_updated: m.last_updated || m.last_active || (row.updated_at ? row.updated_at.slice(0, 10) : null),
-    first_seen: m.first_seen || (row.created_at ? row.created_at.slice(0, 10) : null),
-    last_active: m.last_active || (row.updated_at ? row.updated_at.slice(0, 10) : null),
+    last_updated: m.last_updated || m.last_active || toDateStr(row.updated_at),
+    first_seen: m.first_seen || toDateStr(row.created_at),
+    last_active: m.last_active || toDateStr(row.updated_at),
     involved_bots: m.involved_bots || [],
     primary_bot: m.primary_bot || row.agent_id || null,
     milestones: milestones,
@@ -1967,7 +2140,7 @@ function flattenAPProjectSlim(row) {
     involved_bots: m.involved_bots || [],
     primary_bot: m.primary_bot || row.agent_id || null,
     next_actions: nextActions,
-    last_active: m.last_active || (row.updated_at ? row.updated_at.slice(0, 10) : null),
+    last_active: m.last_active || toDateStr(row.updated_at),
     merged_into: m.merged_into || null,
     maintainers: Array.isArray(m.maintainers) ? m.maintainers : null,
     metadata: { sort_order: m.sort_order ?? null },
