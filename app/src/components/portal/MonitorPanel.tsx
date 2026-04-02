@@ -36,12 +36,6 @@ function getUptimeColor(pct: number): string {
   return "text-rose-400"
 }
 
-function getUptimeBgColor(pct: number): string {
-  if (pct >= 99) return "bg-emerald-500"
-  if (pct >= 95) return "bg-amber-500"
-  return "bg-rose-500"
-}
-
 function getStatusDotColor(status: number | null, expected: number = 200): string {
   if (status === null) return "bg-zinc-600"
   return status === expected ? "bg-emerald-400" : "bg-rose-400"
@@ -69,13 +63,10 @@ function getGroupTag(groupName: string | null | undefined): string {
   return name.slice(0, 2) // 取前两个字
 }
 
-/** 获取 tag badge 样式 */
-function getGroupTagStyle(groupName: string | null | undefined): string {
-  const name = groupName ?? "其他"
-  if (name.includes("生产")) return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-  if (name.includes("开发")) return "bg-amber-500/20 text-amber-400 border-amber-500/30"
-  if (name.includes("代理")) return "bg-blue-500/20 text-blue-400 border-blue-500/30"
-  return "bg-zinc-500/20 text-zinc-400 border-zinc-500/30"
+/** 获取 tag badge 样式 - 低调、次要信息 */
+function getGroupTagStyle(_groupName: string | null | undefined): string {
+  // 统一灰色风格，不分颜色，降低视觉权重
+  return "bg-zinc-700/30 text-zinc-500"
 }
 
 /** 排序监控项：异常优先 → uptime低优先 → 名字字母序 */
@@ -97,30 +88,13 @@ function sortMonitors(monitors: MonitorUptime[]): MonitorUptime[] {
   })
 }
 
-/* ═══════════════════ MiniUptimeBar (简化版进度条) ═══════════════════ */
+/* ═══════════════════ MiniUptimeBar (迷你版竖条) ═══════════════════ */
 
-function MiniUptimeBar({ uptimePct }: { uptimePct: number }) {
-  const pct = Math.min(100, Math.max(0, uptimePct))
-  const bgColor = getUptimeBgColor(pct)
-  
-  return (
-    <div className="flex items-center gap-2 min-w-[100px]">
-      <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden">
-        <div
-          className={cn("h-full rounded-full transition-all", bgColor)}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <span className={cn("text-[11px] tabular-nums font-medium min-w-[42px] text-right", getUptimeColor(pct))}>
-        {pct.toFixed(1)}%
-      </span>
-    </div>
-  )
-}
-
-/* ═══════════════════ UptimeBar (详细7天历史条) ═══════════════════ */
-
-function UptimeBar({ history, expectedStatus }: { history: MonitorHistory[]; expectedStatus: number }) {
+function MiniUptimeBar({ history, expectedStatus, uptimePct }: { 
+  history: MonitorHistory[]
+  expectedStatus: number
+  uptimePct: number 
+}) {
   // 45 bars for 7 days (~3.7h per bar)
   const barCount = 45
   const bars: ("ok" | "fail" | "none")[] = useMemo(() => {
@@ -150,18 +124,23 @@ function UptimeBar({ history, expectedStatus }: { history: MonitorHistory[]; exp
   }, [history, expectedStatus])
 
   return (
-    <div className="flex gap-[2px] mt-1.5">
-      {bars.map((status, i) => (
-        <div
-          key={i}
-          className={cn(
-            "h-5 w-[4px] rounded-sm",
-            status === "ok" && "bg-emerald-500",
-            status === "fail" && "bg-rose-500",
-            status === "none" && "bg-zinc-700"
-          )}
-        />
-      ))}
+    <div className="flex items-center gap-2">
+      <div className="flex gap-[2px]">
+        {bars.map((status, i) => (
+          <div
+            key={i}
+            className={cn(
+              "h-3 w-[4px] rounded-sm",
+              status === "ok" && "bg-emerald-500",
+              status === "fail" && "bg-rose-500",
+              status === "none" && "bg-zinc-700"
+            )}
+          />
+        ))}
+      </div>
+      <span className={cn("text-[10px] tabular-nums font-medium min-w-[38px] text-right", getUptimeColor(uptimePct))}>
+        {uptimePct.toFixed(1)}%
+      </span>
     </div>
   )
 }
@@ -227,15 +206,14 @@ function MonitorRow({ monitor, expanded, onToggle }: {
   const [history, setHistory] = useState<MonitorHistory[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
 
+  // 在组件 mount 时就加载 history 数据，用于右侧 MiniUptimeBar
   useEffect(() => {
-    if (expanded && history.length === 0) {
-      setHistoryLoading(true)
-      fetchMonitorHistory(monitor.monitor_id, 168) // 7 days for bars
-        .then(data => setHistory(data ?? []))
-        .catch(console.error)
-        .finally(() => setHistoryLoading(false))
-    }
-  }, [expanded, monitor.monitor_id, history.length])
+    setHistoryLoading(true)
+    fetchMonitorHistory(monitor.monitor_id, 168) // 7 days for bars
+      .then(data => setHistory(data ?? []))
+      .catch(console.error)
+      .finally(() => setHistoryLoading(false))
+  }, [monitor.monitor_id])
 
   const uptimePct = Number(monitor.uptime_pct) || 100
   const avgMs = monitor.avg_response_ms != null ? Math.round(monitor.avg_response_ms) : null
@@ -252,8 +230,8 @@ function MonitorRow({ monitor, expanded, onToggle }: {
         onClick={onToggle}
         className="w-full text-left p-3 flex items-center gap-3 hover:bg-zinc-800/30 transition-colors cursor-pointer"
       >
-        {/* 左侧 ~70%: 折叠图标 | 状态圆点 | 名字链接 | tag badge */}
-        <div className="flex items-center gap-3 flex-1 min-w-0">
+        {/* 左侧: 折叠图标 | 状态圆点 | 名字链接 | tag badge */}
+        <div className="flex items-center gap-3 flex-shrink-0">
           {expanded ? (
             <ChevronDown className="h-3.5 w-3.5 text-zinc-500 flex-shrink-0" />
           ) : (
@@ -269,18 +247,18 @@ function MonitorRow({ monitor, expanded, onToggle }: {
               target="_blank"
               rel="noopener noreferrer"
               onClick={handleNameClick}
-              className="text-sm text-zinc-200 hover:text-emerald-400 hover:underline truncate transition-colors"
+              className="text-sm text-zinc-200 hover:text-emerald-400 hover:underline truncate transition-colors max-w-[140px]"
               title={monitor.target}
             >
               {monitor.name}
             </a>
           ) : (
-            <span className="text-sm text-zinc-200 truncate">{monitor.name}</span>
+            <span className="text-sm text-zinc-200 truncate max-w-[140px]">{monitor.name}</span>
           )}
-          {/* Group tag badge */}
+          {/* Group tag badge - 低调样式 */}
           <span
             className={cn(
-              "text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0",
+              "text-[9px] px-1.5 py-0 rounded-full flex-shrink-0",
               getGroupTagStyle(monitor.group_name)
             )}
           >
@@ -288,9 +266,13 @@ function MonitorRow({ monitor, expanded, onToggle }: {
           </span>
         </div>
 
-        {/* 右侧 ~30%: MiniUptimeBar */}
-        <div className="flex-shrink-0 w-[130px]">
-          <MiniUptimeBar uptimePct={uptimePct} />
+        {/* 右侧: 迷你版 UptimeBar（竖条） */}
+        <div className="flex-1 flex justify-end">
+          {historyLoading ? (
+            <div className="text-[10px] text-zinc-600">加载中...</div>
+          ) : (
+            <MiniUptimeBar history={history} expectedStatus={monitor.expected_status} uptimePct={uptimePct} />
+          )}
         </div>
       </div>
 
@@ -314,25 +296,15 @@ function MonitorRow({ monitor, expanded, onToggle }: {
           <div className="mt-2 flex items-center gap-2 text-[11px]">
             <span className="text-zinc-500">分组:</span>
             <span className={cn(
-              "px-1.5 py-0.5 rounded-full border text-[10px]",
+              "px-1.5 py-0.5 rounded-full text-[10px]",
               getGroupTagStyle(monitor.group_name)
             )}>
               {monitor.group_name ?? "其他"}
             </span>
           </div>
 
-          {/* 7天详细历史条 */}
-          {historyLoading ? (
-            <div className="text-xs text-zinc-600 py-2">加载中...</div>
-          ) : (
-            <>
-              <div className="mt-3">
-                <div className="text-[10px] text-zinc-500 mb-1">7天历史</div>
-                <UptimeBar history={history} expectedStatus={monitor.expected_status} />
-              </div>
-              <ResponseChart history={(history ?? []).slice(-48)} />
-            </>
-          )}
+          {/* ResponseChart */}
+          <ResponseChart history={(history ?? []).slice(-48)} />
 
           {/* 统计信息 */}
           <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
