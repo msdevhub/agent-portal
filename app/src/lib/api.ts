@@ -653,3 +653,89 @@ export const updateProjectSortOrder = (orders: { id: string; sort_order: number 
 export const fetchPortalSettings = () => api<Record<string, any>>('/portal-settings')
 export const updatePortalSettings = (settings: Record<string, any>) => api<{ ok: boolean }>('/portal-settings', 'PUT', settings)
 export const fetchBotsList = () => api<any[]>('/bots/status')
+
+// ══════════════════════════════════════════════════════════════════
+// ── Health Monitoring API ──
+// ══════════════════════════════════════════════════════════════════
+
+export interface Monitor {
+  id: number
+  name: string
+  type: 'http' | 'tcp' | 'ping' | 'keyword'
+  target: string
+  interval_sec: number
+  timeout_ms: number
+  expected_status: number
+  group_name: string
+  project_slug: string | null
+  enabled: boolean
+  paused: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+export interface MonitorUptime {
+  monitor_id: number
+  name: string
+  group_name: string
+  target: string
+  expected_status: number
+  uptime_pct: number
+  avg_response_ms: number | null
+  last_status: number | null
+  last_checked: string | null
+  checks_24h: number
+  fails_24h: number
+}
+
+export interface MonitorHistory {
+  snapshot_time: string
+  http_status: number
+  response_ms: number | null
+}
+
+export interface Incident {
+  id: number
+  monitor_id: number
+  monitor_name?: string
+  started_at: string
+  resolved_at: string | null
+  duration_sec: number | null
+  cause: string | null
+}
+
+export const fetchMonitors = (filters?: { type?: string; group?: string; enabled?: boolean }) => {
+  const params = new URLSearchParams()
+  if (filters?.type) params.set('type', filters.type)
+  if (filters?.group) params.set('group', filters.group)
+  if (filters?.enabled !== undefined) params.set('enabled', String(filters.enabled))
+  const qs = params.toString()
+  return api<Monitor[]>(`/monitors${qs ? `?${qs}` : ''}`)
+}
+
+export const fetchMonitorUptime = (days?: number) =>
+  api<MonitorUptime[]>(`/monitors/uptime${days ? `?days=${days}` : ''}`)
+
+export const fetchMonitorHistory = (id: number, hours?: number) =>
+  api<MonitorHistory[]>(`/monitors/${id}/history${hours ? `?hours=${hours}` : ''}`)
+
+export const createMonitor = (data: Partial<Monitor>) =>
+  api<Monitor>('/monitors', 'POST', data)
+
+export const updateMonitor = (id: number, data: Partial<Monitor>) =>
+  api<Monitor>(`/monitors/${id}`, 'PUT', data)
+
+export const deleteMonitor = (id: number) =>
+  api<{ ok: boolean }>(`/monitors/${id}`, 'DELETE')
+
+export const toggleMonitor = (id: number) =>
+  api<{ ok: boolean; enabled: boolean }>(`/monitors/${id}/toggle`, 'POST')
+
+export const fetchIncidents = (options?: { monitor_id?: number; limit?: number; resolved?: boolean }) => {
+  const params = new URLSearchParams()
+  if (options?.monitor_id) params.set('monitor_id', String(options.monitor_id))
+  if (options?.limit) params.set('limit', String(options.limit))
+  if (options?.resolved !== undefined) params.set('resolved', String(options.resolved))
+  const qs = params.toString()
+  return api<Incident[]>(`/incidents${qs ? `?${qs}` : ''}`)
+}

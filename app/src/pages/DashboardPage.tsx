@@ -32,6 +32,7 @@ import {
 import { UserMenu } from "@/components/auth/UserMenu"
 import { CommandBar } from "@/components/portal/CommandBar"
 import type { CommandTarget } from "@/components/portal/CommandBar"
+import { MonitorPanel } from "@/components/portal/MonitorPanel"
 import { SettingsPanel } from "@/components/portal/SettingsPanel"
 import { Badge } from "@/components/ui/badge"
 import ReactMarkdown from "react-markdown"
@@ -1448,11 +1449,10 @@ function ServerFleetTab({ servers, loading, selectedTargets, onToggleTarget, pro
 }) {
   const { domestic, global } = useMemo(() => classifyServers(servers), [servers])
   const hasServers = servers.length > 0
-  const hasSiteStatus = (productionSites ?? []).length > 0 || (devSites ?? []).length > 0
 
   return (
     <div className="space-y-6">
-      {hasSiteStatus && <SiteStatusOverview productionSites={productionSites ?? []} devSites={devSites ?? []} />}
+      <MonitorPanel />
       {loading && !hasServers ? <EmptyRow text="加载中..." /> : !hasServers ? <EmptyRow text="暂无服务器数据" /> : (
         <>
           {domestic.length > 0 && <ServerGroup label="国内区域" flag="🇨🇳" servers={domestic} selectedTargets={selectedTargets} onToggleTarget={onToggleTarget} />}

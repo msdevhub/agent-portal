@@ -449,7 +449,63 @@ app.post('/api/init-db', async (req, res) => {
     await dbExec(`CREATE INDEX IF NOT EXISTS idx_cron_checks_job ON "AP_cron_checks" (job_id, snapshot_time DESC);`);
     await dbExec(`CREATE INDEX IF NOT EXISTS idx_cron_checks_time ON "AP_cron_checks" (snapshot_time DESC);`);
 
-    res.json({ ok: true, message: 'All 16 tables created/verified' });
+    // -- 6. Health Monitoring --
+    await dbExec(`
+      CREATE TABLE IF NOT EXISTS "AP_monitors" (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'http',
+        target TEXT NOT NULL,
+        interval_sec INT DEFAULT 300,
+        timeout_ms INT DEFAULT 5000,
+        expected_status INT DEFAULT 200,
+        keyword TEXT,
+        tags TEXT[] DEFAULT '{}',
+        project_slug TEXT,
+        group_name TEXT DEFAULT '其他',
+        enabled BOOLEAN DEFAULT true,
+        paused BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+    await dbExec(`CREATE INDEX IF NOT EXISTS idx_monitors_enabled ON "AP_monitors" (enabled, group_name);`);
+
+    await dbExec(`
+      CREATE TABLE IF NOT EXISTS "AP_incidents" (
+        id SERIAL PRIMARY KEY,
+        monitor_id INT REFERENCES "AP_monitors"(id) ON DELETE CASCADE,
+        started_at TIMESTAMPTZ NOT NULL,
+        resolved_at TIMESTAMPTZ,
+        duration_sec INT,
+        cause TEXT,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+    await dbExec(`CREATE INDEX IF NOT EXISTS idx_incidents_monitor ON "AP_incidents" (monitor_id, started_at DESC);`);
+
+    // Add response_ms column to AP_site_checks if missing
+    await dbExec(`ALTER TABLE "AP_site_checks" ADD COLUMN IF NOT EXISTS response_ms INT;`);
+
+    // Seed initial monitors if empty
+    const monitorCount = await dbQuery(`SELECT count(*) AS c FROM "AP_monitors"`);
+    if (Number(monitorCount[0]?.c || 0) === 0) {
+      await dbExec(`
+        INSERT INTO "AP_monitors" (name, type, target, group_name, project_slug) VALUES
+          ('ClawCraft', 'http', 'https://craft.clawlines.net', '生产环境', 'clawcraft'),
+          ('Agent Portal', 'http', 'https://agent-project.clawlines.net', '生产环境', 'agent-portal'),
+          ('Agentic BI', 'http', 'https://bi.clawlines.net', '生产环境', 'agentic-bi'),
+          ('Gateway', 'http', 'https://gateway.clawlines.net', '生产环境', 'clawline'),
+          ('Client Web', 'http', 'https://chat.clawlines.net', '生产环境', 'clawline'),
+          ('ClawCraft Dev', 'http', 'https://craft.dev.dora.restry.cn', '开发环境', 'clawcraft'),
+          ('Agent Portal Dev', 'http', 'https://portal.dev.dora.restry.cn', '开发环境', 'agent-portal'),
+          ('Agentic BI Dev', 'http', 'https://bi.dev.dora.restry.cn', '开发环境', 'agentic-bi'),
+          ('Gateway Dev', 'http', 'https://gw.dev.dora.restry.cn', '开发环境', 'clawline'),
+          ('Client Web Dev', 'http', 'https://web.dev.dora.restry.cn', '开发环境', 'clawline')
+      `);
+    }
+
+    res.json({ ok: true, message: 'All 18 tables created/verified' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -2701,6 +2757,177 @@ app.put('/api/ap-projects/sort-order', async (req, res) => {
 
 // ── Patch /api/ops/send to auto-track channel ──
 const origSendHandler = app._router?.stack; // we'll patch inline instead
+
+// ══════════════════════════════════════════════════════════════════
+// ── Health Monitoring API ──
+// ══════════════════════════════════════════════════════════════════
+
+// GET /api/monitors — list monitors with optional filters
+app.get('/api/monitors', async (req, res) => {
+  try {
+    const { type, group, enabled } = req.query;
+    let where = [];
+    if (type) where.push(`type = '${esc(type)}'`);
+    if (group) where.push(`group_name = '${esc(group)}'`);
+    if (enabled !== undefined) where.push(`enabled = ${enabled === 'true'}`);
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const rows = await dbQuery(`SELECT * FROM "AP_monitors" ${whereClause} ORDER BY group_name, name`);
+    res.json(rows ?? []);
+  } catch (e) {
+    console.error('[monitors] list error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/monitors — create new monitor
+app.post('/api/monitors', async (req, res) => {
+  try {
+    const { name, type = 'http', target, interval_sec = 300, timeout_ms = 5000, expected_status = 200, keyword, project_slug, group_name = '其他' } = req.body || {};
+    if (!name || !target) {
+      return res.status(400).json({ error: 'name and target required' });
+    }
+    const rows = await dbQuery(`
+      INSERT INTO "AP_monitors" (name, type, target, interval_sec, timeout_ms, expected_status, keyword, project_slug, group_name)
+      VALUES ('${esc(name)}', '${esc(type)}', '${esc(target)}', ${parseInt(interval_sec, 10)}, ${parseInt(timeout_ms, 10)}, ${parseInt(expected_status, 10)}, ${keyword ? `'${esc(keyword)}'` : 'NULL'}, ${project_slug ? `'${esc(project_slug)}'` : 'NULL'}, '${esc(group_name)}')
+      RETURNING *
+    `);
+    res.status(201).json(rows[0]);
+  } catch (e) {
+    console.error('[monitors] create error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/monitors/:id — update monitor
+app.put('/api/monitors/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, type, target, interval_sec, timeout_ms, expected_status, keyword, project_slug, group_name, enabled, paused } = req.body || {};
+    const sets = [];
+    if (name !== undefined) sets.push(`name = '${esc(name)}'`);
+    if (type !== undefined) sets.push(`type = '${esc(type)}'`);
+    if (target !== undefined) sets.push(`target = '${esc(target)}'`);
+    if (interval_sec !== undefined) sets.push(`interval_sec = ${parseInt(interval_sec, 10)}`);
+    if (timeout_ms !== undefined) sets.push(`timeout_ms = ${parseInt(timeout_ms, 10)}`);
+    if (expected_status !== undefined) sets.push(`expected_status = ${parseInt(expected_status, 10)}`);
+    if (keyword !== undefined) sets.push(`keyword = ${keyword ? `'${esc(keyword)}'` : 'NULL'}`);
+    if (project_slug !== undefined) sets.push(`project_slug = ${project_slug ? `'${esc(project_slug)}'` : 'NULL'}`);
+    if (group_name !== undefined) sets.push(`group_name = '${esc(group_name)}'`);
+    if (enabled !== undefined) sets.push(`enabled = ${!!enabled}`);
+    if (paused !== undefined) sets.push(`paused = ${!!paused}`);
+    sets.push(`updated_at = now()`);
+    const rows = await dbQuery(`UPDATE "AP_monitors" SET ${sets.join(', ')} WHERE id = ${parseInt(id, 10)} RETURNING *`);
+    if (!rows || rows.length === 0) return res.status(404).json({ error: 'Monitor not found' });
+    res.json(rows[0]);
+  } catch (e) {
+    console.error('[monitors] update error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/monitors/:id
+app.delete('/api/monitors/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await dbExec(`DELETE FROM "AP_monitors" WHERE id = ${parseInt(id, 10)}`);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[monitors] delete error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/monitors/:id/toggle — toggle enabled/paused
+app.post('/api/monitors/:id/toggle', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const rows = await dbQuery(`
+      UPDATE "AP_monitors" SET enabled = NOT enabled, updated_at = now()
+      WHERE id = ${parseInt(id, 10)} RETURNING enabled
+    `);
+    if (!rows || rows.length === 0) return res.status(404).json({ error: 'Monitor not found' });
+    res.json({ ok: true, enabled: rows[0].enabled });
+  } catch (e) {
+    console.error('[monitors] toggle error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/monitors/uptime — uptime stats for all monitors
+app.get('/api/monitors/uptime', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days, 10) || 7;
+    const rows = await dbQuery(`
+      SELECT 
+        m.id as monitor_id, m.name, m.group_name, m.target, m.expected_status,
+        COALESCE(ROUND(count(*) FILTER (WHERE s.http_status = m.expected_status) * 100.0 / NULLIF(count(s.*), 0), 2), 100) as uptime_pct,
+        ROUND(avg(s.response_ms)::numeric, 0) as avg_response_ms,
+        (SELECT http_status FROM "AP_site_checks" WHERE name = m.name AND kind = (CASE WHEN m.group_name = '生产环境' THEN 'production' ELSE 'dev' END) ORDER BY snapshot_time DESC LIMIT 1) as last_status,
+        (SELECT snapshot_time FROM "AP_site_checks" WHERE name = m.name AND kind = (CASE WHEN m.group_name = '生产环境' THEN 'production' ELSE 'dev' END) ORDER BY snapshot_time DESC LIMIT 1) as last_checked,
+        count(s.*) FILTER (WHERE s.snapshot_time > now() - interval '24 hours') as checks_24h,
+        count(s.*) FILTER (WHERE s.snapshot_time > now() - interval '24 hours' AND s.http_status != m.expected_status) as fails_24h
+      FROM "AP_monitors" m
+      LEFT JOIN "AP_site_checks" s ON s.name = m.name 
+        AND s.kind = (CASE WHEN m.group_name = '生产环境' THEN 'production' ELSE 'dev' END)
+        AND s.snapshot_time > now() - interval '${days} days'
+      WHERE m.enabled = true
+      GROUP BY m.id, m.name, m.group_name, m.target, m.expected_status
+      ORDER BY m.group_name, m.name
+    `);
+    res.json(rows ?? []);
+  } catch (e) {
+    console.error('[monitors/uptime] error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/monitors/:id/history — check history for a specific monitor
+app.get('/api/monitors/:id/history', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const hours = parseInt(req.query.hours, 10) || 24;
+    // First get the monitor to determine kind
+    const monitors = await dbQuery(`SELECT * FROM "AP_monitors" WHERE id = ${parseInt(id, 10)}`);
+    if (!monitors || monitors.length === 0) return res.status(404).json({ error: 'Monitor not found' });
+    const m = monitors[0];
+    const kind = m.group_name === '生产环境' ? 'production' : 'dev';
+    const rows = await dbQuery(`
+      SELECT snapshot_time, http_status, response_ms
+      FROM "AP_site_checks"
+      WHERE name = '${esc(m.name)}' AND kind = '${kind}'
+        AND snapshot_time > now() - interval '${hours} hours'
+      ORDER BY snapshot_time ASC
+    `);
+    res.json(rows ?? []);
+  } catch (e) {
+    console.error('[monitors/:id/history] error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/incidents — list incidents
+app.get('/api/incidents', async (req, res) => {
+  try {
+    const { monitor_id, limit = 50, resolved } = req.query;
+    let where = [];
+    if (monitor_id) where.push(`i.monitor_id = ${parseInt(monitor_id, 10)}`);
+    if (resolved === 'true') where.push(`i.resolved_at IS NOT NULL`);
+    if (resolved === 'false') where.push(`i.resolved_at IS NULL`);
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const rows = await dbQuery(`
+      SELECT i.*, m.name as monitor_name
+      FROM "AP_incidents" i
+      LEFT JOIN "AP_monitors" m ON m.id = i.monitor_id
+      ${whereClause}
+      ORDER BY i.started_at DESC
+      LIMIT ${parseInt(limit, 10)}
+    `);
+    res.json(rows ?? []);
+  } catch (e) {
+    console.error('[incidents] list error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // SPA fallback: serve index.html for all non-API routes
 const _spaIndexPath = path.resolve(__dirname, 'dist', 'index.html');
