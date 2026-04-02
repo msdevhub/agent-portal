@@ -101,19 +101,21 @@ def main():
     project_cache = update_dormant_status(project_cache, date_str)
     save_cache(project_cache)
 
-    # Supabase is the authority — load only non-dismissed projects
+    # Load projects from DB (PG direct preferred, Supabase fallback)
     sb_names = None
     try:
-        sb_projects = supabase_request(
-            "AP_projects?status=neq.dismissed&select=id,name,status,metadata",
-            None, method="GET",
+        from push.db import db_select
+        sb_projects = db_select(
+            "AP_projects",
+            columns="id, name, slug, status, metadata, emoji, tags, agent_id, updated_at",
         )
         if sb_projects:
+            sb_projects = [p for p in sb_projects if p.get("status") != "dismissed"]
             sb_names = {p["name"] for p in sb_projects}
             active_projects = sb_projects
-            print(f"   📋 从 Supabase 加载 {len(active_projects)} 个项目（权威来源）")
+            print(f"   📋 从 PG 加载 {len(active_projects)} 个项目（权威来源）")
         else:
-            raise ValueError("Supabase 返回空")
+            raise ValueError("PG 返回空")
     except Exception as e:
         print(f"   ⚠️ Supabase 加载失败，回退到本地缓存: {e}")
         active_projects = [

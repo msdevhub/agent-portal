@@ -538,6 +538,7 @@ export interface OpsPost {
   create_at: number
   update_at: number
   type?: string
+  is_self?: boolean
 }
 
 export interface OpsSendResult {
@@ -647,3 +648,8 @@ export const fetchDigestStatus = () =>
 // ── Project Sort Order ──
 export const updateProjectSortOrder = (orders: { id: string; sort_order: number }[]) =>
   api<{ ok: boolean }>('/ap-projects/sort-order', 'PUT', { orders })
+
+// ── Portal Settings ──
+export const fetchPortalSettings = () => api<Record<string, any>>('/portal-settings')
+export const updatePortalSettings = (settings: Record<string, any>) => api<{ ok: boolean }>('/portal-settings', 'PUT', settings)
+export const fetchBotsList = () => api<any[]>('/bots/status')

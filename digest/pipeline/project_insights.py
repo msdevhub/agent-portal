@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 from config import L1_BASE_URL, L1_API_KEY, DATA_DIR
 from pipeline.llm import call_llm, parse_json_response
 from push.supabase import resolve_agent_id
-from push.db import db_select, db_update
+from push.db import db_select, db_update, db_insert
 
 CST = timezone(timedelta(hours=8))
 L3_MODEL = "gpt-5.4"
@@ -358,7 +358,19 @@ def push_project_insights(updates: list, matched_projects: dict,
         try:
             result = db_update("AP_projects", {"id": pid}, patch)
             if not result:
-                print(f"  ⚠️ {pname}: UPDATE 返回空（id={pid[:8]}... 未匹配到行）")
+                # Row doesn't exist yet — INSERT instead
+                insert_data = {
+                    "id": pid,
+                    "name": pname,
+                    "slug": pname.lower().replace(" ", "-")[:60],
+                    "description": update.get("current_summary", ""),
+                    "stage": "build",
+                    "status": "active",
+                    "metadata": metadata,
+                }
+                db_insert("AP_projects", insert_data)
+                print(f"  ✨ {pname}: 新建项目 + {update.get('health', '?')} — {update.get('current_summary', '')[:40]}")
+                success += 1
                 continue
             print(f"  ✅ {pname}: {update.get('health', '?')} — {update.get('current_summary', '')[:40]}")
             success += 1

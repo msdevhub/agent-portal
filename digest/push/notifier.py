@@ -142,7 +142,7 @@ def notify_daddy(date_str: str, project_updates: list, all_projects: list):
             msg += f" • {u.get('project_name', '?')}\n"
         msg += "\n"
 
-    msg += f"👉 [在门户查看](https://portal.dev.dora.restry.cn)"
+    msg += f"👉 [在门户查看](https://portal.nexora.restry.cn)"
 
     channel = _get_daddy_dm_channel()
     _send_mm(channel, msg)

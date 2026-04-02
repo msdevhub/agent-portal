@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
 import type { OpsPost } from "@/lib/api"
-import { getOpsChannel, getOpsMessages, sendOpsMessage } from "@/lib/api"
+import { getOpsChannel, getOpsMessages, sendOpsMessage, fetchPortalSettings } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 export interface ProjectContext {
@@ -33,7 +33,7 @@ interface CommandBarProps {
   onClearTarget: (id?: string) => void
 }
 
-const PORTAL_SENDER_USER_ID = "8zzs18ha4fdhf8jt8ybm61eqdw" // @dora (admin token sends as this user)
+const PORTAL_SENDER_USER_ID = "hj8iizxdtbb8bfo8wdanp3tfua" // @matter (admin token sends as this user)
 
 type ChatState = {
   channelId: string | null
@@ -81,9 +81,21 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
-  // Determine effective targets: if targets selected, use them. Else if direct chat, use Ottor.
+  // Fetch default bot from portal settings
+  const [defaultBotSetting, setDefaultBotSetting] = useState<{ agent_id: string; name: string; emoji: string; mm_user_id: string } | null>(null)
+  useEffect(() => {
+    fetchPortalSettings()
+      .then(s => { if (s?.default_bot) setDefaultBotSetting(s.default_bot) })
+      .catch(() => {})
+  }, [])
+
+  const fallbackBot = defaultBotSetting
+    ? { id: `${defaultBotSetting.agent_id}-direct`, name: defaultBotSetting.name, emoji: defaultBotSetting.emoji, user_id: defaultBotSetting.mm_user_id, kind: "bot" as const }
+    : { id: "nexora-direct", name: "Nexora", emoji: "🦞", user_id: "x67znhpzf3bs7pfktmed8qihny", kind: "bot" as const }
+
+  // Determine effective targets: if targets selected, use them. Else if direct chat, use default bot.
   const isMultiTarget = targets.length > 1
-  const primaryTarget = targets[0] ?? (directChatActive ? { id: "ottor-direct", name: "Ottor", emoji: "🔬", user_id: "ctgkdui9n38idyepmdzaoccgdw", kind: "bot" } : null)
+  const primaryTarget = targets[0] ?? (directChatActive ? fallbackBot : null)
   const projectCtx = targets.find(t => t.projectContext)?.projectContext ?? null
   
   // Active chat key is primary target ID (or Ottor)
@@ -393,7 +405,7 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
 
           {/* Messages Area */}
           {expanded && (
-            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-[300px] max-h-[calc(85vh-130px)] sm:max-h-[460px]">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-3 space-y-0.5 min-h-[300px] max-h-[calc(85vh-130px)] sm:max-h-[460px]">
               {historyLoading && (
                 <div className="flex justify-center py-4">
                   <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
@@ -408,39 +420,57 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
               )}
 
               {messages.map((post) => {
-                const isSelf = post.user_id === PORTAL_SENDER_USER_ID
+                const isSelf = post.is_self ?? (post.user_id === PORTAL_SENDER_USER_ID)
                 const { ref, body } = parseRef(post.message ?? "")
+                const botTarget = targets.find(t => t.user_id === post.user_id)
+                const botName = botTarget?.name ?? primaryTarget?.name ?? "Bot"
+                const botInitial = botTarget?.emoji ?? botName[0]?.toUpperCase() ?? "B"
                 
                 return (
-                  <div key={post.id} className={cn("flex w-full", isSelf ? "justify-end" : "justify-start")}>
+                  <div key={post.id} className="group flex items-start gap-2.5 w-full px-2 py-1 hover:bg-zinc-800/20 rounded transition-colors">
+                    {/* Avatar */}
                     <div className={cn(
-                      "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-sm",
+                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold mt-0.5",
                       isSelf 
-                        ? "bg-emerald-600/20 text-emerald-100 rounded-br-none" 
-                        : "bg-zinc-800/60 text-zinc-200 rounded-bl-none"
+                        ? "bg-gradient-to-br from-emerald-500 to-emerald-700 text-white" 
+                        : "bg-gradient-to-br from-indigo-500 to-purple-600 text-white"
                     )}>
-                      {ref && (
-                        <div className="mb-1 inline-flex rounded bg-black/20 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
-                          {ref}
-                        </div>
-                      )}
-                      <div className="chat-markdown prose prose-invert prose-sm max-w-none break-words
-                        prose-p:my-1 prose-p:leading-relaxed
-                        prose-headings:my-2 prose-headings:font-semibold
-                        prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5
-                        prose-code:rounded prose-code:bg-black/30 prose-code:px-1 prose-code:py-0.5 prose-code:text-[13px] prose-code:font-normal prose-code:before:content-none prose-code:after:content-none
-                        prose-pre:my-2 prose-pre:rounded-lg prose-pre:bg-black/30 prose-pre:p-3
-                        prose-table:my-2 prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:border-b prose-th:border-zinc-600 prose-th:text-zinc-300 prose-th:text-xs prose-th:font-semibold
-                        prose-td:px-3 prose-td:py-1.5 prose-td:border-b prose-td:border-zinc-700/50 prose-td:text-xs
+                      {isSelf ? "D" : botInitial}
+                    </div>
+                    {/* Content */}
+                    <div className="min-w-0 flex-1 overflow-hidden">
+                      <div className="flex items-baseline gap-2">
+                        <span className={cn(
+                          "text-xs font-semibold",
+                          isSelf ? "text-emerald-400" : "text-indigo-400"
+                        )}>
+                          {isSelf ? "Daddy" : botName}
+                        </span>
+                        <span className="text-[10px] text-zinc-600">
+                          {new Date(post.create_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </span>
+                        {ref && (
+                          <span className="rounded bg-black/20 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
+                            {ref}
+                          </span>
+                        )}
+                      </div>
+                      <div className="chat-markdown prose prose-invert max-w-none break-words text-zinc-300 text-[13px] leading-[1.5]
+                        prose-p:my-0.5 prose-p:leading-[1.5]
+                        prose-headings:my-1.5 prose-headings:font-semibold prose-headings:text-sm
+                        prose-ul:my-0.5 prose-ol:my-0.5 prose-li:my-0
+                        prose-code:rounded prose-code:bg-black/40 prose-code:px-1 prose-code:py-0.5 prose-code:text-[12px] prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
+                        prose-pre:my-1.5 prose-pre:rounded-md prose-pre:bg-black/40 prose-pre:p-2.5 prose-pre:overflow-x-auto
                         prose-a:text-sky-400 prose-a:no-underline hover:prose-a:underline
-                        prose-blockquote:border-l-2 prose-blockquote:border-zinc-600 prose-blockquote:pl-3 prose-blockquote:text-zinc-400 prose-blockquote:my-2
-                        prose-hr:border-zinc-700 prose-hr:my-3
+                        prose-blockquote:border-l-2 prose-blockquote:border-zinc-600 prose-blockquote:pl-3 prose-blockquote:text-zinc-400 prose-blockquote:my-1
+                        prose-hr:border-zinc-700 prose-hr:my-2
                         prose-strong:text-zinc-100 prose-em:text-zinc-300
+                        [&_table]:my-1.5 [&_table]:w-full [&_table]:text-[12px] [&_table]:border-collapse [&_table]:overflow-x-auto [&_table]:block
+                        [&_th]:px-2.5 [&_th]:py-1.5 [&_th]:text-left [&_th]:text-[11px] [&_th]:font-semibold [&_th]:text-zinc-300 [&_th]:bg-zinc-800/80 [&_th]:border [&_th]:border-zinc-700/60
+                        [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:text-[12px] [&_td]:text-zinc-400 [&_td]:border [&_td]:border-zinc-700/40
+                        [&_tr:hover_td]:bg-zinc-800/30
                       ">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
-                      </div>
-                      <div className="mt-1 text-right text-[10px] opacity-50">
-                        {new Date(post.create_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                       </div>
                     </div>
                   </div>

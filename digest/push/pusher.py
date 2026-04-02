@@ -183,7 +183,7 @@ def sync_bots(collected_data: dict | None = None):
     for bot in mm_bots:
         username = bot["username"]
         agent_id = resolve_agent_id(username)
-        now_str = datetime.now(timezone.utc).isoformat() + "Z"
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
         data = {
             "agent_id": agent_id,

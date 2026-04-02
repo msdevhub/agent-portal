@@ -22,6 +22,7 @@ import {
   Monitor,
   RefreshCw,
   Server,
+  Settings,
   Shield,
   Timer,
   Workflow,
@@ -31,6 +32,7 @@ import {
 import { UserMenu } from "@/components/auth/UserMenu"
 import { CommandBar } from "@/components/portal/CommandBar"
 import type { CommandTarget } from "@/components/portal/CommandBar"
+import { SettingsPanel } from "@/components/portal/SettingsPanel"
 import { Badge } from "@/components/ui/badge"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -114,6 +116,7 @@ export function DashboardPage({
   const [selectedInsightDate, setSelectedInsightDate] = useState<string | null>(null)
   const [botStatuses, setBotStatuses] = useState<Record<string, BotStatusEntry>>({})
   const [projectCounts, setProjectCounts] = useState<{ active: number; total: number } | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const summary = dashboard.summary ?? {}
   const lastUpdated = dashboard.updated_at ?? summary.timestamp ?? null
@@ -214,7 +217,14 @@ export function DashboardPage({
             )}
           </div>
         </div>
-        <div className="shrink-0">
+        <div className="shrink-0 flex items-center gap-2">
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 transition-colors"
+            title="设置"
+          >
+            <Settings className="h-4 w-4" />
+          </button>
           <UserMenu />
         </div>
       </header>
@@ -292,6 +302,8 @@ export function DashboardPage({
           else setSelectedTargets([])
         }}
       />
+
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </main>
   )
 }
