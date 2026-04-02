@@ -34,7 +34,7 @@ import type { Artifact, Project, Stats, TimelineEvent, WorkspaceFile } from "@/l
 import { STATUS_LABELS, STAGES, getArtifactTypeLabel, getStageIndex, getStageLabel } from "@/lib/constants"
 import { cn } from "@/lib/utils"
 
-export type Route = { page: "home" } | { page: "projects" } | { page: "project"; slug: string } | { page: "bot"; agentId: string; date?: string }
+export type Route = { page: "home" } | { page: "projects" } | { page: "project"; slug: string } | { page: "bot"; agentId: string; date?: string } | { page: "ap-project"; id: string }
 export type MarkdownSource = { type: "workspace" } | { type: "doc"; slug: string }
 
 export interface MarkdownPreviewTarget {
@@ -611,6 +611,7 @@ export function navigateToRoute(route: Route) {
     if (route.date) hash += `?date=${encodeURIComponent(route.date)}`
     nextHash = hash
   }
+  else if (route.page === "ap-project") nextHash = `#/ap-project/${encodeURIComponent(route.id)}`
   else nextHash = `#/project/${encodeURIComponent(route.slug)}`
   if (window.location.hash === nextHash) return
   window.location.hash = nextHash
@@ -620,6 +621,10 @@ function parseHashRoute(hash: string): Route {
   const normalized = hash.replace(/^#/, "") || "/"
   if (normalized === "/" || normalized === "") return { page: "home" }
   if (normalized === "/projects") return { page: "projects" }
+  const apMatch = normalized.match(/^\/ap-project\/(.+)$/)
+  if (apMatch) {
+    return { page: "ap-project", id: decodeURIComponent(apMatch[1]) }
+  }
   const match = normalized.match(/^\/project\/(.+)$/)
   if (match) {
     return { page: "project", slug: decodeURIComponent(match[1]) }

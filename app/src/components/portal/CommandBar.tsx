@@ -1,9 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Bot, ChevronDown, ChevronUp, Loader2, MessageSquare, Send, Server, X } from "lucide-react"
+import { Bot, ChevronDown, ChevronUp, FolderOpen, Loader2, MessageSquare, Send, Server, X } from "lucide-react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 import type { OpsPost } from "@/lib/api"
 import { getOpsChannel, getOpsMessages, sendOpsMessage } from "@/lib/api"
 import { cn } from "@/lib/utils"
+
+export interface ProjectContext {
+  id: string
+  name: string
+  emoji?: string | null
+  description?: string | null
+  summary?: string | null
+  timeline?: { date: string; event: string; bot?: string }[]
+  next_actions?: { text: string; done?: boolean }[]
+  status?: string
+}
 
 export interface CommandTarget {
   id: string
@@ -11,6 +24,8 @@ export interface CommandTarget {
   emoji: string
   user_id: string
   kind?: "bot" | "server"
+  prefill?: string
+  projectContext?: ProjectContext
 }
 
 interface CommandBarProps {
@@ -60,6 +75,7 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
   const [sseConnected, setSseConnected] = useState(false)
   const [directChatActive, setDirectChatActive] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  const [projectInfoOpen, setProjectInfoOpen] = useState(false)
   
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -68,6 +84,7 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
   // Determine effective targets: if targets selected, use them. Else if direct chat, use Ottor.
   const isMultiTarget = targets.length > 1
   const primaryTarget = targets[0] ?? (directChatActive ? { id: "ottor-direct", name: "Ottor", emoji: "🔬", user_id: "ctgkdui9n38idyepmdzaoccgdw", kind: "bot" } : null)
+  const projectCtx = targets.find(t => t.projectContext)?.projectContext ?? null
   
   // Active chat key is primary target ID (or Ottor)
   const activeTargetKey = primaryTarget ? `${primaryTarget.kind ?? "bot"}:${primaryTarget.id}` : null
@@ -85,6 +102,18 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
       setExpanded(true)
     }
   }, [targets.length, directChatActive])
+
+  // Prefill input when a target with prefill text is added
+  useEffect(() => {
+    const prefillTarget = targets.find(t => t.prefill)
+    if (prefillTarget?.prefill) {
+      setInput(prefillTarget.prefill)
+      // Clear the prefill flag so it doesn't re-trigger
+      prefillTarget.prefill = undefined
+      // Focus the input
+      setTimeout(() => inputRef.current?.focus(), 100)
+    }
+  }, [targets])
 
   // ── SSE connection ──
   useEffect(() => {
@@ -188,7 +217,11 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
       let finalMsg = msg
       if (targets.length > 0) {
         // Prepend references for ALL targets if they are servers/bots
-        const refs = targets.map(t => `[引用${t.kind === "server" ? "服务器" : "Bot"}: ${t.name}]`).join(" ")
+        const refs = targets.map(t => {
+          const parts = [`[引用${t.kind === "server" ? "服务器" : "Bot"}: ${t.name}]`]
+          if (t.projectContext) parts.push(`[引用项目: ${t.projectContext.name}]`)
+          return parts.join(" ")
+        }).join(" ")
         finalMsg = `${refs} ${msg}`
       }
 
@@ -266,8 +299,8 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
           
           {/* Header */}
           <div className="flex items-center justify-between border-b border-zinc-800/60 px-4 py-3 bg-[#18181b]/50">
-            <div className="flex items-center gap-2 overflow-hidden">
-              <div className="flex -space-x-1.5 overflow-hidden p-0.5">
+            <div className="flex items-center gap-2 overflow-hidden min-w-0">
+              <div className="flex -space-x-1.5 overflow-hidden p-0.5 shrink-0">
                 {targets.length > 0 ? (
                   targets.map((t) => (
                     <div key={t.id} className="relative flex h-6 w-6 items-center justify-center rounded-full border border-[#18181b] bg-zinc-800 text-[10px] ring-2 ring-[#111113]" title={t.name}>
@@ -279,12 +312,24 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
                 )}
               </div>
               
-              <div className="flex flex-col">
-                <span className="text-sm font-medium text-zinc-200 truncate">
-                  {targets.length > 0 
-                    ? `${targets.map(t => t.name).join(", ")}` 
-                    : "Ottor (Direct)"}
-                </span>
+              <div className="flex flex-col min-w-0">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-sm font-medium text-zinc-200 truncate">
+                    {targets.length > 0 
+                      ? `${targets.map(t => t.name).join(", ")}` 
+                      : "Ottor (Direct)"}
+                  </span>
+                  {projectCtx && (
+                    <button
+                      onClick={() => setProjectInfoOpen(v => !v)}
+                      className="inline-flex items-center gap-1 shrink-0 rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-300 hover:bg-violet-500/20 transition"
+                      title="查看项目详情"
+                    >
+                      <FolderOpen className="h-2.5 w-2.5" />
+                      {projectCtx.emoji ?? "📂"} {projectCtx.name}
+                    </button>
+                  )}
+                </div>
                 {waitingSince && (
                   <span className="flex items-center gap-1 text-[10px] text-emerald-400">
                     <Loader2 className="h-2.5 w-2.5 animate-spin" />
@@ -294,7 +339,7 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
               </div>
             </div>
 
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 shrink-0">
               <button 
                 onClick={() => setExpanded(!expanded)}
                 className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
@@ -302,13 +347,49 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
                 {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
               </button>
               <button 
-                onClick={() => { onClearTarget(); setDirectChatActive(false); setExpanded(false); }}
+                onClick={() => { onClearTarget(); setDirectChatActive(false); setExpanded(false); setProjectInfoOpen(false); }}
                 className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
           </div>
+
+          {/* Project Context Panel (collapsible) */}
+          {expanded && projectCtx && projectInfoOpen && (
+            <div className="border-b border-zinc-800/60 bg-violet-500/5 px-4 py-3 space-y-2 max-h-[200px] overflow-y-auto">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-violet-300">{projectCtx.emoji ?? "📂"} {projectCtx.name}</span>
+                <span className="text-[10px] text-zinc-500">{projectCtx.status}</span>
+              </div>
+              {(projectCtx.summary || projectCtx.description) && (
+                <p className="text-xs text-zinc-400 leading-relaxed">{projectCtx.summary || projectCtx.description}</p>
+              )}
+              {projectCtx.timeline && projectCtx.timeline.length > 0 && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">时间线</span>
+                  {projectCtx.timeline.slice(-5).map((ev, i) => (
+                    <div key={i} className="flex items-start gap-2 text-[11px]">
+                      <span className="text-zinc-600 shrink-0 tabular-nums">{ev.date?.slice(5) ?? "—"}</span>
+                      <span className="text-zinc-400">{ev.event}</span>
+                      {ev.bot && <span className="text-sky-400/60 shrink-0">@{ev.bot}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {projectCtx.next_actions && projectCtx.next_actions.filter(a => !a.done).length > 0 && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">待办</span>
+                  {projectCtx.next_actions.filter(a => !a.done).map((a, i) => (
+                    <div key={i} className="flex items-start gap-1.5 text-[11px] text-zinc-400">
+                      <span className="text-sky-400">→</span>
+                      <span>{a.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Messages Area */}
           {expanded && (
@@ -343,7 +424,21 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
                           {ref}
                         </div>
                       )}
-                      <div className="whitespace-pre-wrap break-words">{body}</div>
+                      <div className="chat-markdown prose prose-invert prose-sm max-w-none break-words
+                        prose-p:my-1 prose-p:leading-relaxed
+                        prose-headings:my-2 prose-headings:font-semibold
+                        prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5
+                        prose-code:rounded prose-code:bg-black/30 prose-code:px-1 prose-code:py-0.5 prose-code:text-[13px] prose-code:font-normal prose-code:before:content-none prose-code:after:content-none
+                        prose-pre:my-2 prose-pre:rounded-lg prose-pre:bg-black/30 prose-pre:p-3
+                        prose-table:my-2 prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:border-b prose-th:border-zinc-600 prose-th:text-zinc-300 prose-th:text-xs prose-th:font-semibold
+                        prose-td:px-3 prose-td:py-1.5 prose-td:border-b prose-td:border-zinc-700/50 prose-td:text-xs
+                        prose-a:text-sky-400 prose-a:no-underline hover:prose-a:underline
+                        prose-blockquote:border-l-2 prose-blockquote:border-zinc-600 prose-blockquote:pl-3 prose-blockquote:text-zinc-400 prose-blockquote:my-2
+                        prose-hr:border-zinc-700 prose-hr:my-3
+                        prose-strong:text-zinc-100 prose-em:text-zinc-300
+                      ">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
+                      </div>
                       <div className="mt-1 text-right text-[10px] opacity-50">
                         {new Date(post.create_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                       </div>
@@ -357,8 +452,8 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
 
           {/* Input Area */}
           <div className="border-t border-zinc-800/60 bg-[#111113] p-3 sm:p-4">
-            {/* Selected Tags Chips (Removable) */}
-            {targets.length > 0 && (
+            {/* Selected Tags Chips (Removable) + Project Pill */}
+            {(targets.length > 0 || projectCtx) && (
               <div className="mb-2 flex flex-wrap gap-2">
                 {targets.map(t => (
                   <span key={t.id} className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-800/50 px-2 py-0.5 text-[10px] text-zinc-300">
@@ -367,6 +462,20 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
                     <button onClick={() => onClearTarget(t.id)} className="hover:text-white"><X className="h-3 w-3" /></button>
                   </span>
                 ))}
+                {projectCtx && (
+                  <button
+                    onClick={() => setProjectInfoOpen(v => !v)}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition",
+                      projectInfoOpen
+                        ? "border-violet-500/50 bg-violet-500/20 text-violet-200"
+                        : "border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20"
+                    )}
+                  >
+                    <FolderOpen className="h-2.5 w-2.5" />
+                    {projectCtx.emoji ?? "📂"} {projectCtx.name}
+                  </button>
+                )}
               </div>
             )}
 

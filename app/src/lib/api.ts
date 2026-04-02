@@ -125,6 +125,7 @@ export interface DashboardAgent {
   github?: string
   mm_user_id?: string
   mm_username?: string
+  last_active?: string
   production?: { url: string; status?: number } | null
   dev?: { url: string; status?: number } | null
   container?: { name: string; running: boolean; status: string } | null
@@ -222,7 +223,9 @@ async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> 
 
   if (!res.ok) {
     const message = payload?.error || payload?.message || `请求失败 (${res.status})`
-    throw new Error(message)
+    const err = new Error(message) as Error & { status: number }
+    err.status = res.status
+    throw err
   }
 
   return (payload as T | undefined) ?? (undefined as T)
@@ -393,10 +396,27 @@ export interface DailyActivity {
   content: string
   detail: { category?: string; references?: string[]; deliverables?: string[]; who?: string; original_action?: string } | null
 }
-export const fetchDailyActivities = (agentId: string, date?: string) =>
-  api<DailyActivity[]>(`/daily-activities?agent_id=${encodeURIComponent(agentId)}${date ? `&date=${encodeURIComponent(date)}` : ''}`)
+export const fetchDailyActivities = (agentId: string, date?: string, limit = 50, offset = 0) =>
+  api<DailyActivity[]>(`/daily-activities?agent_id=${encodeURIComponent(agentId)}${date ? `&date=${encodeURIComponent(date)}` : ''}&limit=${limit}&offset=${offset}`)
 export const fetchDailyActivityDates = (agentId: string) =>
   api<string[]>(`/daily-activities/dates?agent_id=${encodeURIComponent(agentId)}`)
+
+// ── Daily Timeline (granular L1 events) ──
+export interface DailyTimelineEvent {
+  id: string
+  agent_id: string
+  date: string
+  time: string | null
+  who: string | null
+  action: string
+  content: string
+  status: string | null
+  deliverables: string[]
+  created_at: string
+}
+export const fetchDailyTimeline = (agentId: string, date?: string, limit = 50, offset = 0) =>
+  api<DailyTimelineEvent[]>(`/daily-timeline?agent_id=${encodeURIComponent(agentId)}${date ? `&date=${encodeURIComponent(date)}` : ''}&limit=${limit}&offset=${offset}`)
+
 export const fetchDailyReport = (date: string) =>
   api<DailyReport>(`/daily-reports/${encodeURIComponent(date)}`)
 export const createDailyReport = (data: { date: string; content: string; agentId?: string }) =>
@@ -546,3 +566,84 @@ export const getOpsMessages = (channelId: string, since?: number) => {
 // ── NBA (Next Best Action) ──
 export const sendNbaMessage = (targetBot: string, message: string) =>
   api<{ ok: boolean; post_id: string; channel_id: string }>('/nba/send', 'POST', { target_bot: targetBot, message })
+
+// ── AP Projects v2 (auto-tracked project status layer) ──
+
+export interface APProject {
+  id: string
+  name: string
+  slug?: string
+  description: string | null
+  status: 'discovering' | 'active' | 'blocked' | 'done' | 'dormant' | 'dismissed'
+  health: 'healthy' | 'attention' | 'blocked' | 'stale'
+  current_summary: string | null
+  responsible_bot: string | null
+  recent_events: { date: string | null; event: string; bot?: string }[]
+  last_updated: string | null
+  first_seen: string | null
+  last_active: string | null
+  involved_bots: string[]
+  primary_bot: string | null
+  milestones: { date: string; event: string; bot?: string }[]
+  next_actions: { text: string; done?: boolean }[]
+  deliverables: { name: string; url?: string; type?: string }[]
+  tags: string[]
+  user_notes: string | null
+  auto_generated: boolean
+  merged_into: string | null
+  emoji?: string | null
+  maintainers?: { agent_id: string; name: string; mm_username?: string }[] | null
+  metadata?: Record<string, any> | null
+}
+
+export const fetchAPProjects = (filters?: { status?: string; bot?: string; tag?: string }) => {
+  const params = new URLSearchParams()
+  if (filters?.status) params.set('status', filters.status)
+  if (filters?.bot) params.set('bot', filters.bot)
+  if (filters?.tag) params.set('tag', filters.tag)
+  const qs = params.toString()
+  return api<APProject[]>(`/ap-projects${qs ? `?${qs}` : ''}`)
+}
+
+export const fetchAPProject = (id: string) =>
+  api<APProject>(`/ap-projects/${id}`)
+
+export const updateAPProject = (id: string, data: { status?: string; user_notes?: string; name?: string; description?: string }) =>
+  api<APProject>(`/ap-projects/${id}`, 'PATCH', data)
+
+export const mergeAPProject = (mainId: string, mergeId: string) =>
+  api<{ success: boolean; updated_project: APProject }>('/project-merge', 'POST', { main_id: mainId, merge_id: mergeId })
+
+export const createAPProject = (data: { name: string; description?: string; status?: string; primary_bot?: string; involved_bots?: string[]; tags?: string[] }) =>
+  api<APProject>('/ap-projects', 'POST', data)
+
+export const sendProjectMessage = (projectId: string, message: string, botId?: string) =>
+  api<{ ok: boolean; post_id: string; channel_id: string; bot: string }>(
+    `/ap-projects/${projectId}/message`, 'POST', { message, bot_id: botId }
+  )
+
+export const submitProjectAction = (data: {
+  project_id: string
+  action: 'approve' | 'reject'
+  next_action?: string
+  reason?: string
+}) =>
+  api<{ ok: boolean; action: string; project_id: string; new_health: string; message_sent: boolean; bot: string | null }>(
+    '/project-action', 'POST', data
+  )
+
+export const sendProjectChat = (projectName: string, message: string) =>
+  api<{ ok: boolean; post_id: string; message: string }>(
+    '/project-chat', 'POST', { project_name: projectName, message }
+  )
+
+// ── Digest Refresh ──
+export const triggerDigestRefresh = () =>
+  api<{ ok: boolean; message?: string }>('/digest/refresh', 'POST')
+
+export const fetchDigestStatus = () =>
+  api<{ running: boolean; last_run?: string; message?: string }>('/digest/status')
+
+// ── Project Sort Order ──
+export const updateProjectSortOrder = (orders: { id: string; sort_order: number }[]) =>
+  api<{ ok: boolean }>('/ap-projects/sort-order', 'PUT', { orders })

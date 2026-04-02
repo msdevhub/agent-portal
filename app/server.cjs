@@ -463,6 +463,18 @@ app.get('/api/reports/:agentId', async (req, res) => {
   }
 });
 
+// ── Helper: parse JSON string fields ──
+function parseJsonField(val) {
+  if (typeof val === 'string') { try { return JSON.parse(val); } catch { return val; } }
+  return val;
+}
+function parseActivityRows(rows) {
+  return (rows ?? []).map(r => ({ ...r, detail: parseJsonField(r.detail) }));
+}
+function parseTimelineRows(rows) {
+  return (rows ?? []).map(r => ({ ...r, deliverables: parseJsonField(r.deliverables) }));
+}
+
 // ── Daily Activities for a specific bot ──
 app.get('/api/activities/:agentId', async (req, res) => {
   try {
@@ -472,7 +484,7 @@ app.get('/api/activities/:agentId', async (req, res) => {
       dateFilter = `AND date = '${esc(date)}'`;
     }
     const rows = await dbQuery(`SELECT * FROM "AP_daily_activities" WHERE agent_id = '${esc(req.params.agentId)}' ${dateFilter} ORDER BY time ASC`);
-    res.json(rows ?? []);
+    res.json(parseActivityRows(rows));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -484,12 +496,14 @@ app.get('/api/daily-activities', async (req, res) => {
     const agentId = req.query.agent_id;
     if (!agentId) return res.json([]);
     const date = req.query.date;
+    const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, Number.parseInt(req.query.offset, 10) || 0);
     let dateFilter = '';
     if (date) {
       dateFilter = `AND date = '${esc(date)}'`;
     }
-    const rows = await dbQuery(`SELECT * FROM "AP_daily_activities" WHERE agent_id = '${esc(agentId)}' ${dateFilter} ORDER BY time ASC`);
-    res.json(rows ?? []);
+    const rows = await dbQuery(`SELECT * FROM "AP_daily_activities" WHERE agent_id = '${esc(agentId)}' ${dateFilter} ORDER BY date DESC, time DESC LIMIT ${limit} OFFSET ${offset}`);
+    res.json(parseActivityRows(rows));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -513,12 +527,14 @@ app.get('/api/daily-timeline', async (req, res) => {
     const agentId = req.query.agent_id;
     if (!agentId) return res.json([]);
     const date = req.query.date;
+    const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, Number.parseInt(req.query.offset, 10) || 0);
     let dateFilter = '';
     if (date) {
       dateFilter = `AND date = '${esc(date)}'`;
     }
-    const rows = await dbQuery(`SELECT * FROM "AP_daily_timeline" WHERE agent_id = '${esc(agentId)}' ${dateFilter} ORDER BY time ASC`);
-    res.json(rows ?? []);
+    const rows = await dbQuery(`SELECT * FROM "AP_daily_timeline" WHERE agent_id = '${esc(agentId)}' ${dateFilter} ORDER BY date DESC, time DESC LIMIT ${limit} OFFSET ${offset}`);
+    res.json(parseTimelineRows(rows));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1857,6 +1873,640 @@ app.post('/api/nba/send', async (req, res) => {
     res.json({ ok: true, post_id: post.id, channel_id: channel.id, target_user_id: targetUserId });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ── AP_projects v2 (auto-tracked project status layer) ──
+// Data lives in AP_projects table; metadata jsonb contains involved_bots, milestones, etc.
+// We flatten metadata into top-level fields for the frontend.
+
+function flattenAPProject(row) {
+  const m = row.metadata || {};
+  // Derive health from status if not explicitly set
+  const statusVal = row.status === 'completed' ? 'done' : (row.status || 'discovering');
+  const healthMap = { active: 'healthy', blocked: 'blocked', discovering: 'healthy', dormant: 'stale', done: 'healthy', dismissed: 'stale' };
+  // Derive current_summary from latest milestone if not set
+  const milestones = m.milestones || [];
+  const sortedMilestones = [...milestones].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const latestMilestone = sortedMilestones[0];
+  // Derive recent_events from last 5 milestones
+  const recentEvents = (m.recent_events || sortedMilestones.slice(0, 5)).map(e =>
+    typeof e === 'string' ? { date: null, event: e } : e
+  );
+  const nextActions = Array.isArray(m.next_actions)
+    ? m.next_actions.map(a => typeof a === 'string' ? { text: a } : a)
+    : [];
+
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    description: row.description,
+    status: statusVal,
+    health: m.health || healthMap[statusVal] || 'healthy',
+    current_summary: m.current_summary || (latestMilestone ? latestMilestone.event : row.description) || null,
+    responsible_bot: m.responsible_bot || m.primary_bot || row.agent_id || null,
+    recent_events: recentEvents,
+    last_updated: m.last_updated || m.last_active || (row.updated_at ? row.updated_at.slice(0, 10) : null),
+    first_seen: m.first_seen || (row.created_at ? row.created_at.slice(0, 10) : null),
+    last_active: m.last_active || (row.updated_at ? row.updated_at.slice(0, 10) : null),
+    involved_bots: m.involved_bots || [],
+    primary_bot: m.primary_bot || row.agent_id || null,
+    milestones: milestones,
+    next_actions: nextActions,
+    deliverables: Array.isArray(m.deliverables)
+      ? m.deliverables.map(d => typeof d === 'string' ? { name: d } : d)
+      : [],
+    tags: row.tags || [],
+    user_notes: m.user_notes || null,
+    auto_generated: m.auto_generated ?? true,
+    merged_into: m.merged_into || null,
+    emoji: row.emoji || null,
+    maintainers: Array.isArray(m.maintainers) ? m.maintainers : null,
+    metadata: { sort_order: m.sort_order ?? null },
+  };
+}
+
+// Slim version for list endpoint — only fields needed by ProjectKanbanTab
+function flattenAPProjectSlim(row) {
+  const m = row.metadata || {};
+  const statusVal = row.status === 'completed' ? 'done' : (row.status || 'discovering');
+  const healthMap = { active: 'healthy', blocked: 'blocked', discovering: 'healthy', dormant: 'stale', done: 'healthy', dismissed: 'stale' };
+  const milestones = m.milestones || [];
+  const sortedMilestones = [...milestones].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const latestMilestone = sortedMilestones[0];
+  const nextActions = Array.isArray(m.next_actions)
+    ? m.next_actions.slice(0, 3).map(a => typeof a === 'string' ? { text: a } : a)
+    : [];
+
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    status: statusVal,
+    emoji: row.emoji || null,
+    health: m.health || healthMap[statusVal] || 'healthy',
+    current_summary: m.current_summary || (latestMilestone ? latestMilestone.event : row.description) || null,
+    responsible_bot: m.responsible_bot || m.primary_bot || row.agent_id || null,
+    involved_bots: m.involved_bots || [],
+    primary_bot: m.primary_bot || row.agent_id || null,
+    next_actions: nextActions,
+    last_active: m.last_active || (row.updated_at ? row.updated_at.slice(0, 10) : null),
+    merged_into: m.merged_into || null,
+    maintainers: Array.isArray(m.maintainers) ? m.maintainers : null,
+    metadata: { sort_order: m.sort_order ?? null },
+  };
+}
+
+app.get('/api/ap-projects', async (req, res) => {
+  try {
+    const { status, bot, tag, include_dismissed } = req.query;
+    const rows = await dbQuery(`
+      SELECT id, name, slug, description, status, tags, agent_id, metadata,
+             emoji, created_at, updated_at
+      FROM "AP_projects"
+      ORDER BY updated_at DESC NULLS LAST
+    `);
+    let projects = rows.map(flattenAPProjectSlim);
+
+    // Default: exclude dismissed unless explicitly requested
+    if (include_dismissed !== 'true') {
+      projects = projects.filter(p => p.status !== 'dismissed');
+    }
+
+    // Apply filters
+    if (status) projects = projects.filter(p => p.status === status);
+    if (bot) projects = projects.filter(p => p.involved_bots.includes(bot));
+
+    // Sort by status priority then last_active
+    const ORDER = { active: 1, blocked: 2, discovering: 3, dormant: 4, done: 5, dismissed: 6 };
+    projects.sort((a, b) => (ORDER[a.status] ?? 7) - (ORDER[b.status] ?? 7) || (b.last_active ?? '').localeCompare(a.last_active ?? ''));
+
+    res.json(projects);
+  } catch (e) {
+    console.error('[ap-projects] list error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/ap-projects/:id', async (req, res) => {
+  try {
+    const rows = await dbQuery(`
+      SELECT id, name, slug, description, status, tags, agent_id, metadata,
+             emoji, created_at, updated_at
+      FROM "AP_projects"
+      WHERE id = '${esc(req.params.id)}'
+      LIMIT 1
+    `);
+    if (!rows.length) return res.status(404).json({ error: 'Project not found' });
+    res.json(flattenAPProject(rows[0]));
+  } catch (e) {
+    console.error('[ap-projects] get error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/ap-projects/:id', async (req, res) => {
+  try {
+    const { status, user_notes, name, description } = req.body;
+    // Read current row
+    const rows = await dbQuery(`SELECT metadata FROM "AP_projects" WHERE id = '${esc(req.params.id)}' LIMIT 1`);
+    if (!rows.length) return res.status(404).json({ error: 'Project not found' });
+    const meta = rows[0].metadata || {};
+
+    const sets = [];
+    if (status) {
+      const dbStatus = status === 'done' ? 'completed' : status;
+      sets.push(`status = '${esc(dbStatus)}'`);
+    }
+    if (name !== undefined) {
+      sets.push(`name = '${esc(name)}'`);
+      const slug = name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-').replace(/^-|-$/g, '');
+      sets.push(`slug = '${esc(slug)}'`);
+    }
+    if (description !== undefined) {
+      sets.push(`description = '${esc(description)}'`);
+    }
+    if (user_notes !== undefined) {
+      meta.user_notes = user_notes;
+      sets.push(`metadata = '${esc(JSON.stringify(meta))}'::jsonb`);
+    }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+    sets.push(`updated_at = NOW()`);
+    await dbExec(`UPDATE "AP_projects" SET ${sets.join(', ')} WHERE id = '${esc(req.params.id)}'`);
+    // Return updated
+    const updated = await dbQuery(`SELECT id, name, slug, description, status, tags, agent_id, metadata, emoji, created_at, updated_at FROM "AP_projects" WHERE id = '${esc(req.params.id)}' LIMIT 1`);
+    res.json(flattenAPProject(updated[0]));
+  } catch (e) {
+    console.error('[ap-projects] patch error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── LLM helper for project merge ──
+async function callLLM(prompt) {
+  const apiBase = process.env.OPENAI_API_BASE || 'https://api.openai.com';
+  const apiKey = process.env.OPENAI_API_KEY;
+  const model = process.env.OPENAI_MODEL || 'gpt-4o';
+  if (!apiKey) throw new Error('OPENAI_API_KEY not set');
+  // Azure endpoint format
+  const url = apiBase.includes('azure.com')
+    ? `${apiBase}/openai/deployments/${model}/chat/completions?api-version=2024-12-01-preview`
+    : `${apiBase}/v1/chat/completions`;
+  const headers = { 'Content-Type': 'application/json' };
+  if (apiBase.includes('azure.com')) headers['api-key'] = apiKey;
+  else headers['Authorization'] = `Bearer ${apiKey}`;
+
+  const resp = await fetch(url, {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'system', content: '你是项目管理助手，输出纯 JSON，不要 markdown 包裹。' }, { role: 'user', content: prompt }],
+      temperature: 0.3,
+      max_tokens: 1000,
+    }),
+  });
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`LLM API ${resp.status}: ${txt.slice(0, 300)}`);
+  }
+  const data = await resp.json();
+  const raw = data.choices?.[0]?.message?.content?.trim() || '';
+  // Strip markdown code fences if present
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  return JSON.parse(cleaned);
+}
+
+// ── Deep project merge ──
+app.post('/api/project-merge', async (req, res) => {
+  try {
+    const { main_id, merge_id } = req.body;
+    if (!main_id || !merge_id) return res.status(400).json({ error: 'main_id and merge_id required' });
+    if (main_id === merge_id) return res.status(400).json({ error: 'Cannot merge a project into itself' });
+
+    const mainRows = await dbQuery(`SELECT * FROM "AP_projects" WHERE id = '${esc(main_id)}' LIMIT 1`);
+    if (!mainRows.length) return res.status(404).json({ error: 'Main project not found' });
+    const mergeRows = await dbQuery(`SELECT * FROM "AP_projects" WHERE id = '${esc(merge_id)}' LIMIT 1`);
+    if (!mergeRows.length) return res.status(404).json({ error: 'Merge project not found' });
+
+    const mainRow = mainRows[0], mergeRow = mergeRows[0];
+    const mainMeta = mainRow.metadata || {}, mergeMeta = mergeRow.metadata || {};
+
+    // Step 1: Deep data merge
+    // Milestones: combine, sort by date, deduplicate by event text
+    const allMilestones = [...(mainMeta.milestones || []), ...(mergeMeta.milestones || [])];
+    const seen = new Set();
+    const mergedMilestones = allMilestones
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+      .filter(m => { const k = `${m.date}|${m.event}`; if (seen.has(k)) return false; seen.add(k); return true; });
+
+    // Involved bots: union
+    const mergedBots = [...new Set([...(mainMeta.involved_bots || []), ...(mergeMeta.involved_bots || [])])];
+
+    // Recent events: combine, sort, keep last 20
+    const allEvents = [...(mainMeta.recent_events || []), ...(mergeMeta.recent_events || [])];
+    const mergedEvents = allEvents
+      .sort((a, b) => ((b.date || '').localeCompare(a.date || '')))
+      .slice(0, 20);
+
+    // Deliverables: combine, deduplicate by name
+    const allDeliverables = [...(mainMeta.deliverables || []), ...(mergeMeta.deliverables || [])];
+    const delNames = new Set();
+    const mergedDeliverables = allDeliverables.filter(d => {
+      const k = d.name || d.url || JSON.stringify(d);
+      if (delNames.has(k)) return false; delNames.add(k); return true;
+    });
+
+    // first_seen: earlier; last_active: later
+    const firstSeen = [mainMeta.first_seen, mergeMeta.first_seen].filter(Boolean).sort()[0] || null;
+    const lastActive = [mainMeta.last_active, mergeMeta.last_active].filter(Boolean).sort().pop() || null;
+
+    // Tags: union
+    const mergedTags = [...new Set([...(mainRow.tags || []), ...(mergeRow.tags || [])])];
+
+    // Step 2: LLM re-analysis
+    let llmResult = {};
+    try {
+      const prompt = `以下两个项目需要合并为一个：
+
+项目A（主项目）: ${mainRow.name}
+描述: ${mainRow.description || '无'}
+里程碑: ${JSON.stringify(mergedMilestones.slice(-10).map(m => `${m.date}: ${m.event}`))}
+
+项目B（被合并项目）: ${mergeRow.name}
+描述: ${mergeRow.description || '无'}
+里程碑: ${JSON.stringify((mergeMeta.milestones || []).slice(-10).map(m => `${m.date}: ${m.event}`))}
+
+请生成合并后的项目信息，返回纯 JSON：
+{
+  "description": "一句话描述合并后的项目目标",
+  "current_summary": "当前状态总结（一句话）",
+  "next_action": "下一步建议",
+  "tags": ["标签1", "标签2"]
+}`;
+      llmResult = await callLLM(prompt);
+      console.log('[project-merge] LLM result:', JSON.stringify(llmResult));
+    } catch (llmErr) {
+      console.error('[project-merge] LLM failed, using fallback:', llmErr.message);
+      llmResult = {
+        description: mainRow.description || mergeRow.description,
+        current_summary: mainMeta.current_summary || mergeMeta.current_summary,
+        next_action: (mainMeta.next_actions?.[0]?.text) || (mergeMeta.next_actions?.[0]?.text) || null,
+        tags: mergedTags,
+      };
+    }
+
+    // Step 3: Write to DB
+    const updatedMeta = {
+      ...mainMeta,
+      milestones: mergedMilestones,
+      involved_bots: mergedBots,
+      recent_events: mergedEvents,
+      deliverables: mergedDeliverables,
+      first_seen: firstSeen,
+      last_active: lastActive,
+      current_summary: llmResult.current_summary || mainMeta.current_summary,
+      next_actions: llmResult.next_action
+        ? [{ text: llmResult.next_action, done: false }, ...(mainMeta.next_actions || []).filter(a => a.done)]
+        : mainMeta.next_actions || [],
+      merged_from: [...(mainMeta.merged_from || []), { id: merge_id, name: mergeRow.name, date: new Date().toISOString().slice(0, 10) }],
+    };
+
+    const newDesc = llmResult.description || mainRow.description || mergeRow.description || '';
+    const newTags = llmResult.tags && Array.isArray(llmResult.tags) ? llmResult.tags : mergedTags;
+
+    await dbExec(`UPDATE "AP_projects" SET
+      description = '${esc(newDesc)}',
+      tags = ARRAY[${newTags.map(t => `'${esc(t)}'`).join(',')}]::text[],
+      metadata = '${esc(JSON.stringify(updatedMeta))}'::jsonb,
+      updated_at = NOW()
+      WHERE id = '${esc(main_id)}'`);
+
+    // Mark merge source as dismissed
+    const srcMeta = { ...mergeMeta, merged_into: main_id };
+    await dbExec(`UPDATE "AP_projects" SET status = 'dismissed', metadata = '${esc(JSON.stringify(srcMeta))}'::jsonb, updated_at = NOW() WHERE id = '${esc(merge_id)}'`);
+
+    // Return updated main project
+    const updated = await dbQuery(`SELECT id, name, slug, description, status, tags, agent_id, metadata, emoji, created_at, updated_at FROM "AP_projects" WHERE id = '${esc(main_id)}' LIMIT 1`);
+    res.json({ success: true, updated_project: flattenAPProject(updated[0]) });
+  } catch (e) {
+    console.error('[project-merge] error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Legacy merge endpoint (redirects to new)
+app.post('/api/ap-projects/:id/merge', async (req, res) => {
+  req.body.main_id = req.body.target_id;
+  req.body.merge_id = req.params.id;
+  // Forward to new endpoint handler
+  try {
+    const { target_id } = req.body;
+    if (!target_id) return res.status(400).json({ error: 'target_id required' });
+    // Redirect logic: main = target, merge = source (this endpoint)
+    const resp = await fetch(`http://localhost:${PORT}/api/project-merge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ main_id: target_id, merge_id: req.params.id }),
+    });
+    const data = await resp.json();
+    res.status(resp.status).json(data);
+  } catch (e) {
+    console.error('[ap-projects] legacy merge error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/ap-projects', async (req, res) => {
+  try {
+    const { name, description, status, primary_bot, involved_bots, tags } = req.body;
+    if (!name) return res.status(400).json({ error: 'name required' });
+    const slug = name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-').replace(/^-|-$/g, '');
+    const meta = {
+      auto_generated: false,
+      first_seen: new Date().toISOString().slice(0, 10),
+      last_active: new Date().toISOString().slice(0, 10),
+      involved_bots: involved_bots || [],
+      primary_bot: primary_bot || null,
+      milestones: [],
+      next_actions: [],
+      deliverables: [],
+    };
+    const id = require('crypto').randomUUID();
+    await dbExec(`
+      INSERT INTO "AP_projects" (id, name, slug, description, status, tags, agent_id, metadata)
+      VALUES (
+        '${id}', '${esc(name)}', '${esc(slug)}', '${esc(description || '')}',
+        '${esc(status === 'done' ? 'completed' : (status || 'active'))}',
+        ${tags ? `ARRAY[${tags.map(t => `'${esc(t)}'`).join(',')}]::text[]` : 'ARRAY[]::text[]'},
+        ${primary_bot ? `'${esc(primary_bot)}'` : 'NULL'},
+        '${esc(JSON.stringify(meta))}'::jsonb
+      )
+    `);
+    const rows = await dbQuery(`SELECT id, name, slug, description, status, tags, agent_id, metadata, emoji, created_at, updated_at FROM "AP_projects" WHERE id = '${id}' LIMIT 1`);
+    res.json(flattenAPProject(rows[0] || { id, name, metadata: meta }));
+  } catch (e) {
+    console.error('[ap-projects] create error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Send message to bot's DM channel (continue conversation) ──
+app.post('/api/ap-projects/:id/message', async (req, res) => {
+  try {
+    const { message, bot_id } = req.body;
+    if (!message) return res.status(400).json({ error: 'message required' });
+
+    // Resolve bot agent_id → MM username → MM user_id
+    const AGENT_ID_MAP = {
+      'rabbit': 'ottor-pc-cloud-bot', 'clawline-channel': 'channelbot',
+      'codebot': 'codebot', 'dora-kids': 'dora-kids', 'fox-claude': 'fox',
+      'giraffe': 'giraffe', 'koala': 'koala', 'miss-e': 'miss-e',
+      'owl': 'owl', 'panda': 'panda', 'penguin': 'penguin-bot',
+      'phoenix': 'phoenix', 'puppy': 'puppy', 'research': 'research',
+      'research-portal': 'portalbot', 'seal-whisper': 'seal-whisper',
+      'tiger-claw': 'tiger', 'whale': 'whale', 'wolf': 'wolf',
+    };
+
+    // Find the bot
+    let agentId = bot_id;
+    if (!agentId) {
+      // Look up from project data
+      const rows = await dbQuery(`SELECT metadata, agent_id FROM "AP_projects" WHERE id = '${esc(req.params.id)}' LIMIT 1`);
+      if (!rows.length) return res.status(404).json({ error: 'Project not found' });
+      const m = rows[0].metadata || {};
+      agentId = m.responsible_bot || m.primary_bot || rows[0].agent_id;
+    }
+    if (!agentId) return res.status(400).json({ error: 'No bot associated with this project' });
+
+    const mmUsername = AGENT_ID_MAP[agentId] || agentId;
+
+    // Get bot's MM user_id
+    const botUserRes = await fetch(`${MM_BASE_URL}/api/v4/users/username/${mmUsername}`, {
+      headers: { Authorization: `Bearer ${MM_ADMIN_TOKEN}` },
+    });
+    if (!botUserRes.ok) return res.status(404).json({ error: `Bot ${mmUsername} not found on Mattermost` });
+    const botUser = await botUserRes.json();
+
+    // Create/get DM channel between @dora and the bot
+    const dmRes = await fetch(`${MM_BASE_URL}/api/v4/channels/direct`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${MM_ADMIN_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify([MM_ADMIN_USER_ID, botUser.id]),
+    });
+    if (!dmRes.ok) return res.status(500).json({ error: 'Failed to create DM channel' });
+    const dmChannel = await dmRes.json();
+
+    // Send message as @dora
+    const msgRes = await fetch(`${MM_BASE_URL}/api/v4/posts`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${MM_ADMIN_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        channel_id: dmChannel.id,
+        message: message,
+      }),
+    });
+    if (!msgRes.ok) return res.status(500).json({ error: 'Failed to send message' });
+
+    const post = await msgRes.json();
+    res.json({ ok: true, post_id: post.id, channel_id: dmChannel.id, bot: mmUsername });
+  } catch (e) {
+    console.error('[ap-projects] message error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Project Action (approve / reject) ──
+app.post('/api/project-action', async (req, res) => {
+  try {
+    const { project_id, action, reason, next_action } = req.body;
+    if (!project_id || !action) return res.status(400).json({ error: 'project_id and action required' });
+    if (!['approve', 'reject'].includes(action)) return res.status(400).json({ error: 'action must be approve or reject' });
+
+    // Ensure AP_project_actions table exists
+    await dbExec(`
+      CREATE TABLE IF NOT EXISTS "AP_project_actions" (
+        id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+        project_id uuid REFERENCES "AP_projects"(id),
+        action text NOT NULL,
+        next_action text,
+        reason text,
+        created_at timestamptz DEFAULT now()
+      )
+    `);
+
+    // Record the action
+    await dbExec(`
+      INSERT INTO "AP_project_actions" (project_id, action, next_action, reason)
+      VALUES ('${esc(project_id)}', '${esc(action)}', '${esc(next_action || '')}', '${esc(reason || '')}')
+    `);
+
+    // Look up responsible bot
+    const rows = await dbQuery(`SELECT metadata, agent_id, name FROM "AP_projects" WHERE id = '${esc(project_id)}' LIMIT 1`);
+    if (!rows.length) return res.status(404).json({ error: 'Project not found' });
+    const project = rows[0];
+    const m = project.metadata || {};
+    const agentId = m.responsible_bot || m.primary_bot || project.agent_id;
+
+    // Build message
+    let mmMessage;
+    if (action === 'approve') {
+      mmMessage = `Daddy 已批准执行：${next_action || '(无具体操作)'}。请立即开始。`;
+    } else {
+      mmMessage = `Daddy 已驳回操作「${next_action || '(无具体操作)'}」。原因：${reason || '未提供'}。请暂停并等待进一步指示。`;
+    }
+
+    // Update project health
+    const newHealth = action === 'approve' ? 'healthy' : 'attention';
+    await dbExec(`
+      UPDATE "AP_projects" SET metadata = jsonb_set(
+        COALESCE(metadata, '{}'::jsonb),
+        '{health}',
+        '"${newHealth}"'
+      ), updated_at = now()
+      WHERE id = '${esc(project_id)}'
+    `);
+
+    // Send message to bot via Mattermost (best-effort)
+    let messageSent = false;
+    if (agentId) {
+      const AGENT_ID_MAP = {
+        'rabbit': 'ottor-pc-cloud-bot', 'clawline-channel': 'channelbot',
+        'codebot': 'codebot', 'dora-kids': 'dora-kids', 'fox-claude': 'fox',
+        'giraffe': 'giraffe', 'koala': 'koala', 'miss-e': 'miss-e',
+        'owl': 'owl', 'panda': 'panda', 'penguin': 'penguin-bot',
+        'phoenix': 'phoenix', 'puppy': 'puppy', 'research': 'research',
+        'research-portal': 'portalbot', 'seal-whisper': 'seal-whisper',
+        'tiger-claw': 'tiger', 'whale': 'whale', 'wolf': 'wolf',
+      };
+      const mmUsername = AGENT_ID_MAP[agentId] || agentId;
+      try {
+        // Get bot MM user
+        const botUserRes = await fetch(`${MM_BASE_URL}/api/v4/users/username/${mmUsername}`, {
+          headers: { Authorization: `Bearer ${MM_ADMIN_TOKEN}` },
+        });
+        if (botUserRes.ok) {
+          const botUser = await botUserRes.json();
+          // Create/get DM channel
+          const dmRes = await fetch(`${MM_BASE_URL}/api/v4/channels/direct`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${MM_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify([MM_ADMIN_USER_ID, botUser.id]),
+          });
+          if (dmRes.ok) {
+            const dm = await dmRes.json();
+            const msgRes = await fetch(`${MM_BASE_URL}/api/v4/posts`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${MM_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ channel_id: dm.id, message: mmMessage }),
+            });
+            messageSent = msgRes.ok;
+          }
+        }
+      } catch (mmErr) {
+        console.error('[project-action] MM send error:', mmErr.message);
+      }
+    }
+
+    res.json({
+      ok: true,
+      action,
+      project_id,
+      new_health: newHealth,
+      message_sent: messageSent,
+      bot: agentId || null,
+    });
+  } catch (e) {
+    console.error('[project-action] error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Project Chat: send message to rabbit DM channel via Mattermost ──
+app.post('/api/project-chat', async (req, res) => {
+  try {
+    const { project_name, message } = req.body;
+    if (!project_name || !message) return res.status(400).json({ error: 'project_name and message required' });
+
+    const MM_URL = 'https://mm.dora.restry.cn/api/v4';
+    const MM_TOKEN = 'ygw5qt86hi8p3r917j7khe3ogc';
+    const RABBIT_DM_CHANNEL = 'um96ezb8z7fdd8rxwikeuygryc';
+
+    const fullMessage = `[项目: ${project_name}] ${message}`;
+
+    const mmResp = await fetch(`${MM_URL}/posts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${MM_TOKEN}` },
+      body: JSON.stringify({ channel_id: RABBIT_DM_CHANNEL, message: fullMessage }),
+    });
+
+    if (!mmResp.ok) {
+      const errTxt = await mmResp.text();
+      console.error('[project-chat] MM error:', mmResp.status, errTxt);
+      return res.status(502).json({ error: 'Failed to send to Mattermost', detail: errTxt.slice(0, 200) });
+    }
+
+    const post = await mmResp.json();
+    console.log('[project-chat] sent:', fullMessage.slice(0, 80), 'post_id:', post.id);
+    res.json({ ok: true, post_id: post.id, message: fullMessage });
+  } catch (e) {
+    console.error('[project-chat] error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Digest Refresh (via Mattermost DM to rabbit bot) ──
+const RABBIT_CHANNEL_ID = 'um96ezb8z7fdd8rxwikeuygryc';
+
+app.post('/api/digest/refresh', async (req, res) => {
+  try {
+    const msgRes = await fetch(`${MM_BASE_URL}/api/v4/posts`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${MM_ADMIN_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        channel_id: RABBIT_CHANNEL_ID,
+        message: '[系统] 门户触发数据刷新',
+      }),
+    });
+    if (!msgRes.ok) {
+      const err = await msgRes.text();
+      console.error('[digest/refresh] MM post failed:', msgRes.status, err);
+      return res.status(502).json({ ok: false, message: '发送触发消息失败' });
+    }
+    console.log('[digest/refresh] triggered via MM DM to rabbit');
+    res.status(202).json({ ok: true, message: '已触发刷新，预计 1-3 分钟后数据更新' });
+  } catch (e) {
+    console.error('[digest/refresh] error:', e);
+    res.status(500).json({ ok: false, message: '触发失败: ' + e.message });
+  }
+});
+
+// ── Project Sort Order (via metadata JSONB) ──
+app.put('/api/ap-projects/sort-order', async (req, res) => {
+  try {
+    const { orders } = req.body || {};
+    if (!Array.isArray(orders) || orders.length === 0) {
+      return res.status(400).json({ ok: false, error: 'orders array required' });
+    }
+    // Update metadata.sort_order for each project
+    const updates = orders.map(({ id, sort_order }) =>
+      dbExec(`UPDATE "AP_projects" SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('sort_order', ${parseInt(sort_order, 10) || 0}) WHERE id = '${esc(id)}'`)
+    );
+    await Promise.all(updates);
+    console.log(`[sort-order] updated ${orders.length} projects via metadata`);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[sort-order] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 

@@ -11,9 +11,11 @@ import {
   Cpu,
   FileText,
   FlaskConical,
+  FolderKanban,
   Globe,
   HardDrive,
   History,
+  LayoutDashboard,
   Lightbulb,
   MapPin,
   MessageSquare,
@@ -34,8 +36,10 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
 import { EmptyState } from "@/components/portal/shared"
-import { fetchDailyInsights, fetchInsightDates, sendNbaMessage, fetchBotStatuses, type BotStatusEntry, type CronJob, type DailyInsights, type InsightsBotSummary, type ThingDone, type NeedAttention, type DashboardAgent, type DashboardData, type Project, type ServerSnapshot, type Stats } from "@/lib/api"
+import { fetchDailyInsights, fetchInsightDates, sendNbaMessage, fetchBotStatuses, fetchAPProjects, type BotStatusEntry, type CronJob, type DailyInsights, type InsightsBotSummary, type ThingDone, type NeedAttention, type DashboardAgent, type DashboardData, type Project, type ServerSnapshot, type Stats } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { APProjectsTab } from "@/pages/APProjectsTab"
+import { ProjectKanbanTab } from "@/pages/ProjectKanbanTab"
 
 /* ═══════════════════ Types ═══════════════════ */
 
@@ -48,6 +52,9 @@ export const MM_TO_AGENT_ID: Record<string, string> = {
   gatewaybot: "clawline-gateway",
   channelbot: "clawline-channel",
   webbot: "clawline-client-web",
+  ottor: "otter",
+  "ottor-pc-cloud-bot": "otter",
+  "wukong": "wukong-bot",
 }
 
 /** Reverse mapping: agent ID → MM username */
@@ -88,23 +95,25 @@ interface DashboardPageProps {
   onCreateProject: () => void
   onOpenProject: (slug: string) => void
   onOpenBot: (agentId: string, date?: string) => void
+  onOpenAPProject?: (id: string) => void
 }
 
-type TabId = "bots" | "servers" | "projects"
+type TabId = "kanban" | "bots" | "servers" | "projects"
 
 /* ═══════════════════ Main Page ═══════════════════ */
 
 export function DashboardPage({
   dashboard, loading, refreshing, historyPoints, historyBotPoints, historyServerPoints, historySummaries, selectedAsOf, onSelectAsOf,
   stats, projects, recentNotes, projectsLoading,
-  onCreateProject, onOpenProject, onOpenBot,
+  onCreateProject, onOpenProject, onOpenBot, onOpenAPProject,
 }: DashboardPageProps) {
-  const [activeTab, setActiveTab] = useState<TabId>("bots")
+  const [activeTab, setActiveTab] = useState<TabId>("kanban")
   const [selectedTargets, setSelectedTargets] = useState<CommandTarget[]>([])
   const [insights, setInsights] = useState<DailyInsights | null>(null)
   const [insightDates, setInsightDates] = useState<string[]>([])
   const [selectedInsightDate, setSelectedInsightDate] = useState<string | null>(null)
   const [botStatuses, setBotStatuses] = useState<Record<string, BotStatusEntry>>({})
+  const [projectCounts, setProjectCounts] = useState<{ active: number; total: number } | null>(null)
 
   const summary = dashboard.summary ?? {}
   const lastUpdated = dashboard.updated_at ?? summary.timestamp ?? null
@@ -119,6 +128,14 @@ export function DashboardPage({
       const sorted = (dates ?? []).sort((a, b) => b.localeCompare(a))
       setInsightDates(sorted)
       if (sorted.length > 0 && !selectedInsightDate) setSelectedInsightDate(sorted[0])
+    }).catch(() => {})
+  }, [])
+
+  // Fetch project counts for tab badge
+  useEffect(() => {
+    fetchAPProjects().then(list => {
+      const active = list.filter(p => p.status === 'active').length
+      setProjectCounts({ active, total: list.length })
     }).catch(() => {})
   }, [])
 
@@ -183,56 +200,63 @@ export function DashboardPage({
   }
 
   return (
-    <main className="flex min-h-screen w-full flex-col px-4 py-5 pb-32 pb-safe-lg sm:px-6 sm:py-6 lg:px-8 lg:py-8">
-      {/* Header */}
-      <header className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">Research Fleet Portal</h1>
-          <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
-            <span>最近更新：{fmtDateTime(lastUpdated)}</span>
+    <main className="flex min-h-screen w-full flex-col px-4 py-4 pb-32 pb-safe-lg sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+      {/* Header: compact title row */}
+      <header className="mb-3 sm:mb-4 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="text-base sm:text-xl md:text-2xl font-semibold tracking-tight text-zinc-50 truncate">Research Fleet Portal</h1>
+          <div className="mt-0.5 flex items-center gap-2 text-[10px] sm:text-xs text-zinc-500">
+            <span className="truncate">{fmtDateTime(lastUpdated)}</span>
             {refreshing && (
-              <span className="inline-flex items-center gap-1 text-emerald-300">
+              <span className="inline-flex items-center gap-1 text-emerald-300 shrink-0">
                 <RefreshCw className="h-3 w-3 animate-spin" />
-                刷新中
               </span>
             )}
           </div>
         </div>
-        <UserMenu />
+        <div className="shrink-0">
+          <UserMenu />
+        </div>
       </header>
 
-      {/* Tab Bar + Inline Time Machine */}
-      <div className="mb-5 flex flex-wrap items-center gap-2">
-        <TabButton active={activeTab === "bots"} onClick={() => setActiveTab("bots")} icon={Workflow} label="Bot Fleet" count={insights?.bot_summaries?.length ?? agents.length} />
-        <TabButton active={activeTab === "servers"} onClick={() => setActiveTab("servers")} icon={Server} label="Server Fleet" count={`${serverOnlineCount}/${servers.length}`} />
+      {/* Tab Bar */}
+      <div className="mb-3 sm:mb-5 flex flex-wrap items-center gap-1.5 sm:gap-2">
+        <TabButton active={activeTab === "kanban"} onClick={() => setActiveTab("kanban")} icon={LayoutDashboard} label="项目看板" count={projectCounts ? `${projectCounts.active}/${projectCounts.total}` : undefined} />
+        <TabButton active={activeTab === "bots"} onClick={() => setActiveTab("bots")} icon={Workflow} label="机器人" count={agents.length} />
+        <TabButton active={activeTab === "servers"} onClick={() => setActiveTab("servers")} icon={Server} label="服务器" count={`${serverOnlineCount}/${servers.length}`} />
+
         {/* Spacer */}
         <div className="flex-1" />
 
         {/* Inline Time Machine — only visible for Server Fleet tab */}
         {activeTab === "servers" && (
-          <InlineTimeMachine
-            points={historyPoints}
-            botPoints={historyBotPoints}
-            serverPoints={historyServerPoints}
-            historySummaries={historySummaries}
-            value={selectedAsOf}
-            latestLabel={asOf}
-            onChange={onSelectAsOf}
-            agents={agents}
-            servers={servers}
-          />
+          <div className="shrink-0 overflow-x-auto max-w-[50vw] sm:max-w-none">
+            <InlineTimeMachine
+              points={historyPoints}
+              botPoints={historyBotPoints}
+              serverPoints={historyServerPoints}
+              historySummaries={historySummaries}
+              value={selectedAsOf}
+              latestLabel={asOf}
+              onChange={onSelectAsOf}
+              agents={agents}
+              servers={servers}
+            />
+          </div>
         )}
       </div>
 
       {/* Tab Content */}
       <div className="min-h-[400px]">
-        {/* Daily Insights Card (above tab content) */}
-        <DailyInsightsCard
-          insights={insights}
-          dates={insightDates}
-          selectedDate={selectedInsightDate}
-          onSelectDate={setSelectedInsightDate}
-        />
+
+        {activeTab === "kanban" && (
+          <ProjectKanbanTab
+            onOpenProject={onOpenAPProject}
+            onOpenBot={onOpenBot}
+            agents={agents}
+            onToggleTarget={handleToggleTarget}
+          />
+        )}
 
         {activeTab === "bots" && (
           <BotFleetTab
@@ -369,6 +393,27 @@ function fmtCST(v: string) {
   const hh = String(d.getHours()).padStart(2, "0")
   const mi = String(d.getMinutes()).padStart(2, "0")
   return `${mm}/${dd} ${hh}:${mi} CST`
+}
+
+/** Format last_active as friendly CST time: 今天 HH:mm / 昨天 HH:mm / MM/DD HH:mm */
+function formatLastActive(v: string) {
+  const d = new Date(v)
+  if (Number.isNaN(d.getTime())) return "—"
+  // Force CST (UTC+8) display
+  const cst = new Date(d.getTime() + (d.getTimezoneOffset() + 480) * 60000)
+  const now = new Date()
+  const nowCST = new Date(now.getTime() + (now.getTimezoneOffset() + 480) * 60000)
+  const hh = String(cst.getHours()).padStart(2, "0")
+  const mi = String(cst.getMinutes()).padStart(2, "0")
+  const time = `${hh}:${mi}`
+  const todayStr = `${nowCST.getFullYear()}-${String(nowCST.getMonth() + 1).padStart(2, "0")}-${String(nowCST.getDate()).padStart(2, "0")}`
+  const dStr = `${cst.getFullYear()}-${String(cst.getMonth() + 1).padStart(2, "0")}-${String(cst.getDate()).padStart(2, "0")}`
+  if (dStr === todayStr) return `今天 ${time}`
+  const yesterday = new Date(nowCST)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const yStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, "0")}-${String(yesterday.getDate()).padStart(2, "0")}`
+  if (dStr === yStr) return `昨天 ${time}`
+  return `${String(cst.getMonth() + 1).padStart(2, "0")}/${String(cst.getDate()).padStart(2, "0")} ${time}`
 }
 
 /**
@@ -850,22 +895,24 @@ function StatBadge({ icon: Icon, label, value, color }: { icon: React.ElementTyp
 }
 
 function TabButton({ active, onClick, icon: Icon, label, count }: {
-  active: boolean; onClick: () => void; icon: React.ElementType; label: string; count: number | string
+  active: boolean; onClick: () => void; icon: React.ElementType; label: string; count?: number | string
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition",
+        "inline-flex items-center gap-1 sm:gap-1.5 rounded-lg px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-xs sm:text-sm font-medium transition whitespace-nowrap",
         active ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200"
       )}
     >
-      <Icon className={cn("h-4 w-4", active ? "text-emerald-400" : "text-zinc-500")} />
-      {label}
-      <span className={cn("ml-0.5 rounded-md px-1.5 py-0.5 text-xs", active ? "bg-zinc-700 text-zinc-300" : "bg-zinc-800/50 text-zinc-500")}>
-        {count}
-      </span>
+      <Icon className={cn("h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0", active ? "text-emerald-400" : "text-zinc-500")} />
+      <span className="hidden xs:inline sm:inline">{label}</span>
+      {count !== undefined && (
+        <span className={cn("rounded-md px-1 sm:px-1.5 py-0.5 text-[10px] sm:text-xs tabular-nums", active ? "bg-zinc-700 text-zinc-300" : "bg-zinc-800/50 text-zinc-500")}>
+          {count}
+        </span>
+      )}
     </button>
   )
 }
@@ -911,23 +958,31 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
   const { archived, toggleArchive } = useArchivedBots()
   const [showArchived, setShowArchived] = useState(false)
 
-  // Build cards from bot_summaries only (primary source)
-  // Merge operational data from agents if available
-  const agentById = useMemo(() => {
-    const m = new Map<string, DashboardAgent>()
-    for (const a of agents) m.set(a.id, a)
+  // Build cards from agents (AP_bots, full list) as base
+  // Overlay activity data from bot_summaries where available
+  const bsByAgentId = useMemo(() => {
+    const m = new Map<string, BotSummary>()
+    if (!botSummaries?.length) return m
+    for (const bs of botSummaries) {
+      const agentId = MM_TO_AGENT_ID[bs.bot] ?? bs.bot
+      m.set(agentId, bs)
+    }
     return m
-  }, [agents])
+  }, [botSummaries])
 
   const allCards = useMemo(() => {
-    if (!botSummaries?.length) return []
-    const cards = botSummaries.map(bs => {
-      const agentId = MM_TO_AGENT_ID[bs.bot] ?? bs.bot
-      const existing = agentById.get(agentId)
-      // Merge: use existing agent data if available, overlay with summary info
-      const card: DashboardAgent & { _emoji?: string } = existing
-        ? { ...existing, _emoji: bs.emoji }
-        : {
+    // Start from the full agents list (AP_bots)
+    const cards: (DashboardAgent & { _emoji?: string; _idle?: boolean })[] = agents.map(a => {
+      const bs = bsByAgentId.get(a.id)
+      return { ...a, _emoji: bs?.emoji ?? (a as any).emoji, _idle: !bs }
+    })
+    // Also include any bot_summaries bots not in agents (virtual bots)
+    if (botSummaries?.length) {
+      const agentIds = new Set(agents.map(a => a.id))
+      for (const bs of botSummaries) {
+        const agentId = MM_TO_AGENT_ID[bs.bot] ?? bs.bot
+        if (!agentIds.has(agentId)) {
+          cards.push({
             id: agentId,
             name: bs.bot,
             role: undefined,
@@ -939,17 +994,27 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
             tasks: null,
             project: undefined,
             _emoji: bs.emoji,
-          }
-      return card
-    })
-    // Sort by last_active DESC (most recently active first)
+            _idle: false,
+          })
+        }
+      }
+    }
+    // Sort: by last_active descending (most recently active first), then alphabetically
     cards.sort((a, b) => {
-      const la = (a as any).last_active ?? ""
-      const lb = (b as any).last_active ?? ""
-      return lb.localeCompare(la)
+      const aTime = a.last_active ?? ""
+      const bTime = b.last_active ?? ""
+      if (aTime || bTime) {
+        if (!aTime) return 1
+        if (!bTime) return -1
+        const cmp = bTime.localeCompare(aTime)
+        if (cmp !== 0) return cmp
+      }
+      return (a.name ?? a.id).localeCompare(b.name ?? b.id)
     })
     return cards
-  }, [botSummaries, agentById])
+  }, [agents, botSummaries, bsByAgentId])
+
+  const agentIdSet = useMemo(() => new Set(agents.map(a => a.id)), [agents])
 
   const activeCards = allCards.filter(a => !archived.has(a.id))
   const archivedCards = allCards.filter(a => archived.has(a.id))
@@ -957,7 +1022,7 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
 
   return (
     <div className="space-y-3">
-      {loading && allCards.length === 0 ? <EmptyRow text="加载中..." /> : allCards.length === 0 ? <EmptyRow text="暂无日报数据" /> : (
+      {loading && allCards.length === 0 ? <EmptyRow text="加载中..." /> : allCards.length === 0 ? <EmptyRow text="暂无 Bot 数据" /> : (
         <>
           {/* Expand/Collapse toggle */}
           <div className="flex justify-end">
@@ -983,11 +1048,12 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
                 onArchive={() => toggleArchive(agent.id)}
                 isArchived={false}
                 botSummary={botSummaryMap[agent.id]}
-                isVirtual={!agentById.has(agent.id)}
+                isVirtual={!agentIdSet.has(agent.id)}
                 virtualEmoji={(agent as any)._emoji}
                 forceExpanded={allExpanded}
                 liveStatus={botStatuses[agent.id]}
                 insightDate={insightDate}
+                idle={(agent as any)._idle}
               />
             ))}
           </div>
@@ -1017,11 +1083,12 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
                       onArchive={() => toggleArchive(agent.id)}
                       isArchived={true}
                       botSummary={botSummaryMap[agent.id]}
-                      isVirtual={!agentById.has(agent.id)}
+                      isVirtual={!agentIdSet.has(agent.id)}
                       virtualEmoji={(agent as any)._emoji}
                       forceExpanded={allExpanded}
                       liveStatus={botStatuses[agent.id]}
                       insightDate={insightDate}
+                      idle={(agent as any)._idle}
                     />
                   ))}
                 </div>
@@ -1034,7 +1101,7 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
   )
 }
 
-function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchive, isArchived, botSummary, isVirtual, virtualEmoji, forceExpanded, liveStatus, insightDate }: { agent: DashboardAgent; selected: boolean; onToggle: () => void; onOpenProject: (slug: string) => void; onOpenBot: (agentId: string, date?: string) => void; onArchive: () => void; isArchived: boolean; botSummary?: BotSummary; isVirtual?: boolean; virtualEmoji?: string; forceExpanded?: boolean; liveStatus?: BotStatusEntry; insightDate?: string | null }) {
+function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchive, isArchived, botSummary, isVirtual, virtualEmoji, forceExpanded, liveStatus, insightDate, idle }: { agent: DashboardAgent; selected: boolean; onToggle: () => void; onOpenProject: (slug: string) => void; onOpenBot: (agentId: string, date?: string) => void; onArchive: () => void; isArchived: boolean; botSummary?: BotSummary; isVirtual?: boolean; virtualEmoji?: string; forceExpanded?: boolean; liveStatus?: BotStatusEntry; insightDate?: string | null; idle?: boolean }) {
   const [localExpanded, setLocalExpanded] = useState(false)
   const expanded = localExpanded
   const [cronOpen, setCronOpen] = useState(false)
@@ -1081,6 +1148,7 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchiv
         "group relative flex flex-col rounded-xl border bg-[#111113] transition-all hover:border-zinc-700",
         selected ? "border-emerald-500/50 bg-emerald-500/5 ring-1 ring-emerald-500/20" : "border-zinc-800/80",
         !selected && statusStyle,
+        idle && !liveStatus?.status && "opacity-45",
       )}>
         {/* Layer 1: Summary — clickable to expand/collapse */}
         <div 
@@ -1112,10 +1180,10 @@ function BotCard({ agent, selected, onToggle, onOpenProject, onOpenBot, onArchiv
               </div>
               <div className="flex items-center gap-2 text-[11px] text-zinc-500">
                 <span>@{agent.id}</span>
-                {(agent as any).last_active && (
+                {agent.last_active && (
                   <>
                     <span>·</span>
-                    <span className="text-zinc-500">{(agent as any).last_active === new Date().toISOString().slice(0, 10) ? "今天活跃" : (agent as any).last_active}</span>
+                    <span className="text-zinc-500">{formatLastActive(agent.last_active)}</span>
                   </>
                 )}
                 {tasks && (

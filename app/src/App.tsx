@@ -22,6 +22,7 @@ import { DashboardPage } from "@/pages/DashboardPage"
 import { AGENT_ID_TO_MM, MM_TO_AGENT_ID, type BotSummary } from "@/pages/DashboardPage"
 import { BotDetailPage } from "@/pages/BotDetailPage"
 import { ProjectDetailPage } from "@/pages/ProjectDetailPage"
+import { APProjectDetailPage } from "@/pages/APProjectDetailPage"
 
 const EMPTY_DASHBOARD: DashboardData = {
   summary: {},
@@ -192,9 +193,9 @@ function App() {
     <div className="dark min-h-screen bg-[#09090b] text-zinc-100 selection:bg-emerald-500/30">
       <div className="pointer-events-none fixed inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.14),transparent_46%),radial-gradient(circle_at_78%_12%,rgba(14,165,233,0.1),transparent_24%)]" />
       <div className="relative">
-        {/* Dashboard — keep mounted but hidden when on bot detail to preserve state */}
-        <div className={route.page === "bot" ? "hidden" : undefined}>
-          {(route.page === "home" || route.page === "projects" || route.page === "bot") && (
+        {/* Dashboard — keep mounted but hidden when on bot/ap-project detail to preserve state */}
+        <div className={route.page === "bot" || route.page === "ap-project" ? "hidden" : undefined}>
+          {(route.page === "home" || route.page === "projects" || route.page === "bot" || route.page === "ap-project") && (
             <DashboardPage
               dashboard={dashboard}
               loading={dashboardLoading}
@@ -212,16 +213,18 @@ function App() {
               onCreateProject={() => setShowCreate(true)}
               onOpenProject={(slug) => navigateToRoute({ page: "project", slug })}
               onOpenBot={(agentId, date) => navigateToRoute({ page: "bot", agentId, date })}
+              onOpenAPProject={(id) => navigateToRoute({ page: "ap-project", id })}
             />
           )}
         </div>
         {route.page === "bot" && (
           <BotDetailPage
-            agent={dashboard.agents?.find(a => a.id === route.agentId) ?? null}
-            agentId={route.agentId}
+            agent={dashboard.agents?.find(a => a.id === route.agentId) ?? dashboard.agents?.find(a => a.id === MM_TO_AGENT_ID[route.agentId]) ?? null}
+            agentId={MM_TO_AGENT_ID[route.agentId] ?? route.agentId}
             onBack={() => navigateToRoute({ page: "home" })}
             mmUsername={AGENT_ID_TO_MM[route.agentId] ?? route.agentId}
             initialDate={route.date}
+            onOpenProject={(id) => navigateToRoute({ page: "ap-project", id })}
           />
         )}
         {route.page === "project" && (
@@ -231,6 +234,13 @@ function App() {
             onBack={() => navigateToRoute({ page: "home" })}
             onRefresh={refreshProject}
             onError={showError}
+          />
+        )}
+        {route.page === "ap-project" && (
+          <APProjectDetailPage
+            projectId={route.id}
+            onBack={() => navigateToRoute({ page: "home" })}
+            onOpenBot={(agentId) => navigateToRoute({ page: "bot", agentId })}
           />
         )}
       </div>
