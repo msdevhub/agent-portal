@@ -497,11 +497,11 @@ app.post('/api/init-db', async (req, res) => {
           ('Agentic BI', 'http', 'https://bi.clawlines.net', '生产环境', 'agentic-bi'),
           ('Gateway', 'http', 'https://gateway.clawlines.net', '生产环境', 'clawline'),
           ('Client Web', 'http', 'https://chat.clawlines.net', '生产环境', 'clawline'),
-          ('ClawCraft Dev', 'http', 'https://craft.dev.dora.restry.cn', '开发环境', 'clawcraft'),
-          ('Agent Portal Dev', 'http', 'https://portal.dev.dora.restry.cn', '开发环境', 'agent-portal'),
-          ('Agentic BI Dev', 'http', 'https://bi.dev.dora.restry.cn', '开发环境', 'agentic-bi'),
-          ('Gateway Dev', 'http', 'https://gw.dev.dora.restry.cn', '开发环境', 'clawline'),
-          ('Client Web Dev', 'http', 'https://web.dev.dora.restry.cn', '开发环境', 'clawline')
+          ('ClawCraft', 'http', 'https://craft.dev.dora.restry.cn', '开发环境', 'clawcraft'),
+          ('Agent Portal', 'http', 'https://portal.dev.dora.restry.cn', '开发环境', 'agent-portal'),
+          ('Agentic BI', 'http', 'https://bi.dev.dora.restry.cn', '开发环境', 'agentic-bi'),
+          ('Gateway', 'http', 'https://gw.dev.dora.restry.cn', '开发环境', 'clawline'),
+          ('Client Web', 'http', 'https://web.dev.dora.restry.cn', '开发环境', 'clawline')
       `);
     }
 
