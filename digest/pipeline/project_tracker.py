@@ -394,13 +394,16 @@ def apply_match_results(cache: dict, match_result: dict,
 
 def _sync_curated_flags(cache: dict):
     try:
-        from push.supabase import supabase_request
-        resp = supabase_request(
-            "AP_projects?select=id,metadata&metadata->>curated=eq.true",
-            data=None, method="GET",
-        )
+        from push.db import db_select
+        resp = db_select("AP_projects", columns="id, metadata")
         if resp:
-            curated_ids = {p["id"] for p in resp if p.get("metadata", {}).get("curated")}
+            curated_ids = set()
+            for p in resp:
+                meta = p.get("metadata") or {}
+                if isinstance(meta, str):
+                    meta = json.loads(meta)
+                if meta.get("curated"):
+                    curated_ids.add(p["id"])
             for p in cache.get("projects", []):
                 if p.get("id") in curated_ids:
                     p["curated"] = True

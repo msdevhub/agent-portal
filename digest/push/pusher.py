@@ -1,15 +1,15 @@
 """
-Push data to Supabase: activities, timeline, projects, bots.
+Push data to database: activities, timeline, projects, bots.
 
-Note: push_daily_reports / push_insights are from v3 and currently unused
-by the v4 pipeline. They are retained here for potential future use.
+Uses push.db for database abstraction (PG direct or Supabase REST).
 """
 
 import json
 import uuid
 from datetime import datetime, timezone
 
-from push.supabase import supabase_request, resolve_agent_id
+from push.db import db_select, db_insert, db_update, db_delete
+from push.supabase import resolve_agent_id
 
 
 # ====================================================================
@@ -17,24 +17,18 @@ from push.supabase import supabase_request, resolve_agent_id
 # ====================================================================
 
 def push_activities(l1_results: dict, date_str: str, aggregated_tasks: dict | None = None):
-    """Push activities to AP_daily_activities.
+    """Push activities to AP_daily_activities."""
+    print(f"\n📤 推送活动列表...")
 
-    If aggregated_tasks (from L1.5) is provided, push those (5-10 per bot).
-    Otherwise fall back to raw L1 events (not recommended).
-    """
-    print(f"\n📤 推送活动列表到 Supabase...")
-
-    test = supabase_request(f"AP_daily_activities?limit=0", data=None, method="GET")
-    if test is None:
+    # Check table exists
+    try:
+        db_select("AP_daily_activities", limit=0)
+    except Exception:
         print(f"  ⚠️ AP_daily_activities 表不存在，跳过")
         return
 
-    # Delete old data for the same day (overwrite)
-    supabase_request(
-        f"AP_daily_activities?date=eq.{date_str}",
-        data=None,
-        method="DELETE",
-    )
+    # Delete old data for the same day
+    db_delete("AP_daily_activities", {"date": date_str})
 
     total = 0
 
@@ -60,7 +54,7 @@ def push_activities(l1_results: dict, date_str: str, aggregated_tasks: dict | No
                 })
 
             if rows:
-                supabase_request("AP_daily_activities", data=rows)
+                db_insert("AP_daily_activities", rows)
                 total += len(rows)
                 print(f"  ✅ {emoji} {username}: {len(rows)} 个任务")
     else:
@@ -90,8 +84,7 @@ def push_activities(l1_results: dict, date_str: str, aggregated_tasks: dict | No
 
             if rows:
                 for i in range(0, len(rows), 50):
-                    batch = rows[i:i + 50]
-                    supabase_request("AP_daily_activities", data=batch)
+                    db_insert("AP_daily_activities", rows[i:i + 50])
                 total += len(rows)
                 print(f"  ✅ {emoji} {username}: {len(rows)} 条活动")
 
@@ -104,18 +97,15 @@ def push_activities(l1_results: dict, date_str: str, aggregated_tasks: dict | No
 
 def push_timeline(l1_results: dict, date_str: str):
     """Push L1 key events to AP_daily_timeline (deduplicated, capped)."""
-    print(f"\n📤 推送时间线到 Supabase...")
+    print(f"\n📤 推送时间线...")
 
-    test = supabase_request(f"AP_daily_timeline?limit=0", data=None, method="GET")
-    if test is None:
-        print(f"  ⚠️ AP_daily_timeline 表不存在，跳过（请先调用 /api/init-db）")
+    try:
+        db_select("AP_daily_timeline", limit=0)
+    except Exception:
+        print(f"  ⚠️ AP_daily_timeline 表不存在，跳过")
         return
 
-    supabase_request(
-        f"AP_daily_timeline?date=eq.{date_str}",
-        data=None,
-        method="DELETE",
-    )
+    db_delete("AP_daily_timeline", {"date": date_str})
 
     total = 0
     for username, l1_data in l1_results.items():
@@ -162,60 +152,11 @@ def push_timeline(l1_results: dict, date_str: str):
 
         if rows:
             for i in range(0, len(rows), 50):
-                supabase_request("AP_daily_timeline", data=rows[i:i + 50])
+                db_insert("AP_daily_timeline", rows[i:i + 50])
             total += len(rows)
             print(f"  ✅ {emoji} {username}: {len(rows)} 条时间线事件（原始 {len(events)} 条）")
 
     print(f"  📊 总计 {total} 条时间线事件推送完毕")
-
-
-# ====================================================================
-# Projects (project_tracker cache → AP_projects)
-# ====================================================================
-
-def push_projects(projects: list[dict]):
-    """Push project data to AP_projects (upsert on name)."""
-    print(f"\n📤 推送 {len(projects)} 个项目到 AP_projects...")
-
-    for p in projects:
-        if p.get("curated", False):
-            print(f"  🔒 {p['name']} (curated, skipped)")
-            continue
-
-        data = {
-            "id": p.get("id", str(uuid.uuid4())),
-            "name": p.get("name", ""),
-            "slug": p.get("name", "").lower().replace(" ", "-").replace("/", "-")[:50],
-            "description": p.get("description", ""),
-            "status": p.get("status", "discovering"),
-            "tags": p.get("tags", []),
-            "agent_id": resolve_agent_id(p.get("primary_bot", "")) or "rabbit",
-            "emoji": p.get("emoji", "📋"),
-            "metadata": {
-                "auto_generated": p.get("auto_generated", True),
-                "first_seen": p.get("first_seen", ""),
-                "last_active": p.get("last_active", ""),
-                "involved_bots": [resolve_agent_id(b) for b in p.get("involved_bots", [])],
-                "primary_bot": p.get("primary_bot", ""),
-                "milestones": p.get("milestones", []),
-                "next_actions": p.get("next_actions", []),
-                "deliverables": p.get("deliverables", []),
-                "merged_into": p.get("merged_into", ""),
-                "user_notes": p.get("user_notes", ""),
-            },
-            "updated_at": datetime.now(timezone.utc).isoformat() + "Z",
-        }
-
-        result = supabase_request(
-            "AP_projects?on_conflict=id",
-            data=data,
-            headers_extra={"Prefer": "return=representation,resolution=merge-duplicates"},
-        )
-
-        if result:
-            print(f"  ✅ {p['name']}")
-        else:
-            print(f"  ❌ {p['name']}")
 
 
 # ====================================================================
@@ -233,10 +174,8 @@ def sync_bots(collected_data: dict | None = None):
 
     mm_bots = [b for b in mm_bots if b["username"] not in ("system-bot",)]
 
-    existing = supabase_request("AP_bots?select=agent_id,mm_username", data=None, method="GET")
-    existing_usernames = set()
-    if existing:
-        existing_usernames = {b["mm_username"] for b in existing}
+    existing = db_select("AP_bots", columns="agent_id, mm_username")
+    existing_usernames = {b["mm_username"] for b in existing} if existing else set()
 
     new_count = 0
     update_count = 0
@@ -244,6 +183,7 @@ def sync_bots(collected_data: dict | None = None):
     for bot in mm_bots:
         username = bot["username"]
         agent_id = resolve_agent_id(username)
+        now_str = datetime.now(timezone.utc).isoformat() + "Z"
 
         data = {
             "agent_id": agent_id,
@@ -251,27 +191,23 @@ def sync_bots(collected_data: dict | None = None):
             "emoji": bot.get("emoji", "🤖"),
             "mm_user_id": bot["id"],
             "mm_username": username,
-            "updated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "updated_at": now_str,
         }
 
         if username not in existing_usernames:
-            data["created_at"] = datetime.now(timezone.utc).isoformat() + "Z"
-            result = supabase_request("AP_bots", data=data)
-            if result:
+            data["created_at"] = now_str
+            result = db_insert("AP_bots", data)
+            if result is not None:
                 new_count += 1
                 print(f"  ✨ 新注册: {bot.get('emoji', '🤖')} {username} → {agent_id}")
         else:
-            result = supabase_request(
-                f"AP_bots?agent_id=eq.{agent_id}",
-                data={
-                    "name": data["name"],
-                    "emoji": data["emoji"],
-                    "mm_user_id": data["mm_user_id"],
-                    "updated_at": data["updated_at"],
-                },
-                method="PATCH",
-            )
-            if result:
+            result = db_update("AP_bots", {"agent_id": agent_id}, {
+                "name": data["name"],
+                "emoji": data["emoji"],
+                "mm_user_id": data["mm_user_id"],
+                "updated_at": data["updated_at"],
+            })
+            if result is not None:
                 update_count += 1
 
     print(f"  📊 新增 {new_count} 个，更新 {update_count} 个，总计 {len(mm_bots)} 个 bot")

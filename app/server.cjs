@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3013;
@@ -7,8 +8,13 @@ const MIME_TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'imag
 const CHANGELOG_TTL_MS = 5 * 60 * 1000;
 const changelogCache = new Map();
 
-const SUPABASE_URL = 'https://db.dora.restry.cn';
-const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJzZXJ2aWNlX3JvbGUiLAogICAgImlzcyI6ICJzdXBhYmFzZS1kZW1vIiwKICAgICJpYXQiOiAxNjQxNzY5MjAwLAogICAgImV4cCI6IDE3OTk1MzU2MDAKfQ.DaYlNEoUrrEn2Ig7tqibS-PHK5vgusbcbo7X36XVt4Q';
+// ── Database ──
+// DATABASE_URL=postgresql://agent_portal:AgentP0rtal2026!@localhost:5432/postgres
+const DATABASE_URL = process.env.DATABASE_URL;
+const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
+// Legacy Supabase fallback (remove after migration confirmed)
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://db.dora.restry.cn';
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJzZXJ2aWNlX3JvbGUiLAogICAgImlzcyI6ICJzdXBhYmFzZS1kZW1vIiwKICAgICJpYXQiOiAxNjQxNzY5MjAwLAogICAgImV4cCI6IDE3OTk1MzU2MDAKfQ.DaYlNEoUrrEn2Ig7tqibS-PHK5vgusbcbo7X36XVt4Q';
 
 // ── Portal Chat (Mattermost DM as @dora via admin token) ──
 const MM_ADMIN_TOKEN = process.env.MM_ADMIN_TOKEN || 'ygw5qt86hi8p3r917j7khe3ogc';
@@ -80,6 +86,11 @@ app.use(express.json());
 app.use(express.static(STATIC_ROOT));
 
 async function dbQuery(sql) {
+  if (pool) {
+    const { rows } = await pool.query(sql);
+    return rows;
+  }
+  // Supabase HTTP fallback
   const res = await fetch(`${SUPABASE_URL}/pg/rest/v1/rpc/run_sql`, {
     method: 'POST',
     headers: {
@@ -100,6 +111,11 @@ async function dbQuery(sql) {
 
 // For DDL statements (CREATE TABLE/INDEX etc) that don't return rows
 async function dbExec(sql) {
+  if (pool) {
+    await pool.query(sql);
+    return;
+  }
+  // Supabase HTTP fallback
   const res = await fetch(`${SUPABASE_URL}/pg/rest/v1/rpc/exec_sql`, {
     method: 'POST',
     headers: {
@@ -2522,6 +2538,7 @@ app.get('{*path}', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Agent Portal running on http://localhost:${PORT}`);
+  console.log(`Database: ${pool ? 'PostgreSQL direct ✅' : 'Supabase REST (legacy)'}`);
   console.log(`Workspace root: ${WORKSPACE_ROOT}`);
   console.log(`Sync interval: ${SYNC_INTERVAL_MS / 1000}s`);
 

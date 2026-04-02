@@ -14,7 +14,8 @@ from datetime import datetime, timezone, timedelta
 
 from config import L1_BASE_URL, L1_API_KEY, DATA_DIR
 from pipeline.llm import call_llm, parse_json_response
-from push.supabase import supabase_request, resolve_agent_id, SUPABASE_SERVICE_KEY, SUPABASE_REST
+from push.supabase import resolve_agent_id
+from push.db import db_select, db_update
 
 CST = timezone(timedelta(hours=8))
 L3_MODEL = "gpt-5.4"
@@ -223,13 +224,15 @@ def generate_project_insights(
     # Pull historical status from Supabase
     project_history = {}
     try:
-        sb_projects = supabase_request(
-            "AP_projects?status=neq.dismissed&select=name,metadata",
-            None, method="GET"
-        )
+        sb_projects = db_select("AP_projects", columns="name, metadata")
         if sb_projects:
             for p in sb_projects:
+                if p.get("metadata", {}).get("status") == "dismissed":
+                    continue
                 meta = p.get("metadata") or {}
+                if isinstance(meta, str):
+                    import json as _json
+                    meta = _json.loads(meta)
                 project_history[p["name"]] = {
                     "last_summary": meta.get("current_summary", ""),
                     "last_health": meta.get("health", ""),
@@ -352,26 +355,11 @@ def push_project_insights(updates: list, matched_projects: dict,
             print(f"  ⚠️ {pname}: 无 project id，跳过 PATCH")
             continue
 
-        import urllib.request
-        headers = {
-            "apikey": SUPABASE_SERVICE_KEY,
-            "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation",
-        }
-
         try:
-            req = urllib.request.Request(
-                f"{SUPABASE_REST}/AP_projects?id=eq.{pid}",
-                data=json.dumps(patch).encode(),
-                headers=headers,
-                method="PATCH",
-            )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                body = json.loads(resp.read())
-                if not body:
-                    print(f"  ⚠️ {pname}: PATCH 返回空（id={pid[:8]}... 未匹配到行）")
-                    continue
+            result = db_update("AP_projects", {"id": pid}, patch)
+            if not result:
+                print(f"  ⚠️ {pname}: UPDATE 返回空（id={pid[:8]}... 未匹配到行）")
+                continue
             print(f"  ✅ {pname}: {update.get('health', '?')} — {update.get('current_summary', '')[:40]}")
             success += 1
         except Exception as e:

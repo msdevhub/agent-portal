@@ -18,7 +18,12 @@ MM_ADMIN_TOKEN = os.environ.get("MM_ADMIN_TOKEN", "")
 DADDY_USER_ID = os.environ.get("DADDY_USER_ID", "8zzs18ha4fdhf8jt8ybm61eqdw")
 TEAM_ID = os.environ.get("MM_TEAM_ID", "x1dtaayrof878chorb6mrj9ana")
 
-# === Supabase ===
+# === Database ===
+# Preferred: direct PG connection (set DATABASE_URL)
+# Fallback: Supabase REST (set SUPABASE_URL + SUPABASE_SERVICE_KEY)
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+# === Supabase (fallback when DATABASE_URL is not set) ===
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://db.dora.restry.cn/pg")
 SUPABASE_REST = f"{SUPABASE_URL}/rest/v1"
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
