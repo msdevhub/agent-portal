@@ -16,40 +16,47 @@
 ## Project Structure
 
 ```
-CONTEXT.md       ← project context & status
-DEPLOY.md        ← deployment documentation
-poc/
-  v3-shadcn/     ← React + shadcn/ui frontend (source)
-  v2-pixel/      ← Express backend + static hosting
-    server.js    ← API server (port 3002)
-    public/      ← built frontend output (deploy target)
-research/        ← research reports
+CONTEXT.md       ← project context & status (单一事实源)
+app/
+  server.cjs     ← Express API server (PORT=3002)
+  src/           ← React frontend source
+  dist/          ← built frontend output
+digest/          ← Python Digest Pipeline (L0→L3)
+  digest.py      ← pipeline 入口
+  pipeline/      ← collector/extractor/aggregator/tracker/insights
+  push/          ← pusher/db/supabase/notifier
+  server/        ← trigger server (port 18790)
+caddy/           ← Caddy 反代配置
 tasks.json       ← task tracker
-skills/          ← agent skills (project-sync, codex-delegate, tavily)
-memory/          ← daily memory logs
+skills/          ← agent skills
 ```
 
 ## Deployment
 
-- **Backend:** `poc/v2-pixel/server.js` on port 3002
-- **Frontend build:** `cd poc/v3-shadcn && npx tsc --noEmit && npx vite build`
-- **Deploy frontend:** `cp -r poc/v3-shadcn/dist/* poc/v2-pixel/public/`
-- **HTTPS URL:** `https://agent-project.clawlines.net/`
-- **Caddy:** reverse proxy `agent-project.clawlines.net` → `localhost:3002`
+- **Backend:** `app/server.cjs` with `PORT=3002`
+- **Frontend build:** `cd app && npx vite build`
+- **Frontend serve:** pm2 serve dist on port 3013
+- **HTTPS URL:** `https://portal.dev.dora.restry.cn/`
+- **Caddy:** 主站 → `localhost:3013`, `/api/*` → `localhost:3002`
+- **Git:** `https://github.com/msdevhub/agent-portal`
 
 ## Health Check
 
-服务跑在**本机** port 3002。
-- 网页检查: `curl -s -o /dev/null -w '%{http_code}' https://agent-project.clawlines.net/`
-- API 检查: `curl -s -o /dev/null -w '%{http_code}' http://localhost:3002/api/projects`
-- 进程检查: `ss -tlnp | grep 3002`
-- 如果挂了: `cd poc/v2-pixel && nohup node server.js > /tmp/portal-server.log 2>&1 &`
+服务跑在**本机** port 3002 (API) + port 3013 (静态前端)。
+- 网页检查: `curl -s -o /dev/null -w '%{http_code}' https://portal.dev.dora.restry.cn/`
+- API 检查: `curl -s -o /dev/null -w '%{http_code}' http://localhost:3002/api/ap-projects`
+- 进程检查: `ss -tlnp | grep -E '3002|3013'`
+- 如果 API 挂了: `cd app && PORT=3002 DATABASE_URL="postgresql://agent_portal:AgentP0rtal2026!@localhost:5432/postgres" nohup node server.cjs > /tmp/portal-server.log 2>&1 &`
+- 如果前端挂了: `pm2 restart dev-portal`
 
 ## API
 
 - Base URL: `http://localhost:3002/api`
-- CRUD: `/projects`, `/tasks`, `/artifacts`, `/timeline`
-- Doc serve: `/api/doc/<slug>/<file>`
+- Projects: `/ap-projects`, `/ap-projects/:id`, `/project-action`, `/project-chat`, `/project-merge`
+- Bots: `/bots`, `/bots/:id`
+- Activities: `/daily-activities`, `/daily-timeline`
+- Artifacts: `/artifacts`
+- Digest: `/digest/refresh` (triggers pipeline via MM DM)
 
 ## Key Identifiers
 

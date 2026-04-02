@@ -1,52 +1,106 @@
 # Agent Portal — 项目上下文
 
 ## 项目概况
-研究项目管理平台 — 网页版查看和管理 Ottor 所有研究项目、任务、产出物、上下文和时间线。
+研究项目管理平台 — 网页版查看和管理所有研究项目、Bot 状态、任务、产出物和时间线。
 
 ## 当前状态
 - 阶段: 🔨 验证 (build)
-- 版本: v3.8
-- 进度: 10/12 任务完成 (83%)
-- 线上: https://agent-project.clawlines.net
+- 版本: v4.0
+- 线上: https://portal.dev.dora.restry.cn
+- Git: https://github.com/msdevhub/agent-portal
 
-## 最近更新 (2026-03-14 12:10 UTC)
+## 维护者变更 (2026-04-02)
+项目从 Rabbit 正式移交给 PortalBot，包括前端、后端和 Digest Pipeline 的全部维护。
 
-### v3.8 — 轻量拆分 + 单文档收口
-- 前端把 `App.tsx` 拆成主入口 + `HomePage` + `ProjectDetailPage`，公共 UI/工具提取到 `components/portal/shared.tsx`
-- 保持拆分克制：只抽页面和公共块，不做过度组件化
-- 删除项目根 `README.md`，项目文档只保留 `CONTEXT.md` 作为单一事实源
-- 上下文 Tab 只保留 `CONTEXT.md` 卡片，移除 README 重复入口
-- 后端 `PROJECT_REGISTRY` 改为展示 `CONTEXT.md`、`research/architecture.md`、`DEPLOY.md`
-- `GET /api/artifacts` 新增可用性过滤，自动隐藏已删除文档留下的坏产出物链接
+## 最近更新 (2026-04-02)
 
-### v3.7e — 模型上下文面板 + CONTEXT.md 预览
-- 后端新增 `GET /api/model-context/:slug` — 返回 3 层文件列表 + token 估算
-- 上下文 Tab 顶部新增"模型上下文"面板（紫色主题，~3777 tokens / 3%）
-- CONTEXT.md 与 README 以可点击卡片展示，点击弹出 Markdown 预览
-- 修复 WORKSPACE_ROOT 路径错误（少一层 ../）导致上下文/记忆 API 返回空
-- 修复 file:// 路径产出物无法预览（新增 WORKSPACE_PREFIX 解析）
-- 修复 nullable project prop 导致 useEffect 崩溃黑屏
-- 移除产出物三点菜单，整个卡片可直接点击打开
+### v4.0 — PG 直连 + Digest Pipeline 接管
+- Rabbit 提交 commit 47806f7: server.cjs 和 Python digest pipeline 支持 `DATABASE_URL` 直连 PG
+- 新增 `digest/` 目录: 完整的 Python pipeline (L0→L1→L1.5→L2→L3→通知)
+- 修复 PG 直连兼容性: 添加 `toDateStr()` 处理 Date 对象 vs 字符串差异
+- 修复 RLS 权限: disable 了 supabase_admin 拥有的 AP_ 表的 Row Level Security
+- GRANT ALL AP_ 表权限给 `agent_portal` 用户
 
-### v3.6 — 移动端 UX 迭代 2 (Codex)
-- 删除 SYSTEM ONLINE 横幅
-- 详情页顶部简化：select 藏入编辑弹窗
-- 时间线紧凑化 ~100px → ~44px
-- 已完成任务默认折叠
-- Accordion 摘要 + 产出物图标区分
+### v3.9 — Project Kanban + 功能扩展 (2026-03-31 ~ 04-01)
+- Project Kanban Tab 作为默认首页，替代 daily insights
+- 拖拽排序项目卡片 (mobile touch sensor 优化)
+- 项目决策 approve/reject (POST /api/project-action)
+- Chat 功能 (POST /api/project-chat via MM API)
+- AI 项目合并 (POST /api/project-merge)
+- BotDetailPage 滚动加载替代日期选择器
+- Slim API 响应 (561KB → 13KB)
+- 过滤 dismissed 项目, idle 状态检测
+- Refresh 按钮改为 MM DM 触发 pipeline
 
-## 架构决策
-- Q2 认证: 先搁置
-- Q4 多 agent: 只需要一个 agent，不加 agent_id
-- 4 阶段模型: idea/plan/build/ship + 前端兼容层
+## 架构
 
-## 技术备忘
-- 前端: Vite 7.3.1 + React 19 + shadcn/ui + Tailwind
-- 后端: Express v5.2.1 (v2-pixel/server.js) port 3002
-- WORKSPACE_ROOT: `path.resolve(__dirname, '../../../..')` (4 层)
-- Build: npx tsc --noEmit && npx vite build
-- Deploy: cp dist/* → ../v2-pixel/public/
+### 目录结构
+```
+app/                   ← 前端(React+Vite) + 后端(server.cjs)
+  server.cjs           ← Express API server
+  src/                 ← React 前端源码
+  dist/                ← 构建输出
+caddy/                 ← Caddy 反代配置
+digest/                ← Python Digest Pipeline
+  digest.py            ← 入口
+  config.py            ← 配置
+  pipeline/            ← L0-L3 处理模块
+    collector.py       ← L0: MM 消息采集
+    extractor.py       ← L1: LLM 结构化提取 (gpt-4.1)
+    aggregator.py      ← L1.5: 任务聚合
+    project_tracker.py ← L2: 项目缓存+匹配
+    project_insights.py← L3: 项目状态分析 (gpt-5.4)
+    llm.py             ← LLM 调用抽象
+  push/                ← 数据推送
+    pusher.py          ← 推送到 DB
+    db.py              ← 🆕 DB 抽象层 (PG直连/REST回退)
+    supabase.py        ← Supabase REST 工具
+    notifier.py        ← 通知 Daddy
+  server/
+    trigger.py         ← Trigger server (port 18790)
+```
 
-## 待办
-- id=6: 产出物与项目说明自动同步 (pending)
-- id=7: 迭代 2/3 移动端优化循环 (pending)
+### 服务端口
+| 端口 | 用途 |
+|------|------|
+| 3002 | server.cjs (PORT=3002 启动, Caddy /api/* 指向) |
+| 3013 | pm2 serve 静态 dist (Caddy 主站指向) |
+| 4013 | Vite dev server (调试用) |
+| 18790 | Digest trigger server |
+
+### 数据库
+- PG 直连: `DATABASE_URL=postgresql://agent_portal:AgentP0rtal2026!@localhost:5432/postgres`
+- Supabase REST 回退: https://db.dora.restry.cn
+- 所有表以 `AP_` 前缀
+- supabase_admin 拥有的表已 disable RLS
+
+### Agent ID 映射 (MM username → Portal ID)
+| MM Username | Portal ID |
+|---|---|
+| ottor-pc-cloud-bot | rabbit |
+| researcher | research |
+| craftbot | research-craft |
+| portalbot | research-portal |
+| bibot | research-bi |
+| gatewaybot | clawline-gateway |
+| channelbot | clawline-channel |
+| webbot | clawline-client-web |
+
+### Mattermost 集成
+- MM Base URL: https://mm.dora.restry.cn
+- Portal Chat 用 admin token 以 @dora 身份发消息到 bot DM
+- Daddy↔portalbot DM channel: y71spmrpifbhzgidtzesgyxrqy
+
+## ⚠️ 已知问题
+1. Artifact RETURNING clause 报错但数据已写入 — 用 GET 验证
+2. artifact_count 不自动更新 — 前端直接查 /api/artifacts
+3. PATCH metadata 会清空 artifacts 数组 — 必须用单独 /api/artifacts 端点
+4. pg_hba.conf 只允许 Docker 子网 (172.18.0.0/16)
+5. trigger_server.py 偶发 502
+
+## 技术栈
+- 前端: Vite + React 19 + shadcn/ui + Tailwind
+- 后端: Node.js Express (server.cjs)
+- Pipeline: Python 3 + psycopg2 + OpenAI
+- 数据库: PostgreSQL (Supabase self-hosted)
+- 认证: Logto (https://logto.dr.restry.cn), 测试: test_all_apps / Test@2026

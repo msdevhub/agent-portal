@@ -9,12 +9,43 @@ import json
 import urllib.request
 from datetime import datetime, timezone, timedelta
 
-from config import MM_API, MM_ADMIN_TOKEN
-
-# Daddy ↔ rabbit DM channel
-DADDY_DM_CHANNEL = "um96ezb8z7fdd8rxwikeuygryc"
+from config import MM_API, MM_ADMIN_TOKEN, DADDY_USER_ID
 
 TZ_SHANGHAI = timezone(timedelta(hours=8))
+
+# Lazily resolved DM channel ID
+_daddy_dm_channel = None
+
+
+def _get_daddy_dm_channel() -> str:
+    """Get or create the DM channel between this bot and Daddy."""
+    global _daddy_dm_channel
+    if _daddy_dm_channel:
+        return _daddy_dm_channel
+
+    # 1. Get bot's own user ID
+    req = urllib.request.Request(
+        f"{MM_API}/users/me",
+        headers={"Authorization": f"Bearer {MM_ADMIN_TOKEN}"},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        bot_id = json.loads(resp.read()).get("id")
+
+    # 2. Create or get existing DM channel
+    data = json.dumps([bot_id, DADDY_USER_ID]).encode()
+    req = urllib.request.Request(
+        f"{MM_API}/channels/direct",
+        data=data,
+        headers={
+            "Authorization": f"Bearer {MM_ADMIN_TOKEN}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        _daddy_dm_channel = json.loads(resp.read()).get("id")
+
+    return _daddy_dm_channel
 
 
 def _dedup_blocked(blocked: list) -> list:
@@ -113,7 +144,8 @@ def notify_daddy(date_str: str, project_updates: list, all_projects: list):
 
     msg += f"👉 [在门户查看](https://portal.dev.dora.restry.cn)"
 
-    _send_mm(DADDY_DM_CHANNEL, msg)
+    channel = _get_daddy_dm_channel()
+    _send_mm(channel, msg)
     print(f"  📬 已通知 Daddy（{time_str}）")
 
 
