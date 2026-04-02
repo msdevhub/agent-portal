@@ -102,6 +102,7 @@ interface DashboardPageProps {
 }
 
 type TabId = "kanban" | "bots" | "servers" | "projects"
+const TAB_ORDER: TabId[] = ["kanban", "bots", "servers"]
 
 /* ═══════════════════ Main Page ═══════════════════ */
 
@@ -111,6 +112,30 @@ export function DashboardPage({
   onCreateProject, onOpenProject, onOpenBot, onOpenAPProject,
 }: DashboardPageProps) {
   const [activeTab, setActiveTab] = useState<TabId>("kanban")
+
+  // Mobile swipe to switch tabs
+  const touchStartX = useRef(0)
+  const touchStartY = useRef(0)
+  const swiping = useRef(false)
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX
+    touchStartY.current = e.touches[0].clientY
+    swiping.current = true
+  }, [])
+  const onTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (!swiping.current) return
+    swiping.current = false
+    const dx = e.changedTouches[0].clientX - touchStartX.current
+    const dy = Math.abs(e.changedTouches[0].clientY - touchStartY.current)
+    if (Math.abs(dx) < 60 || dy > Math.abs(dx) * 0.7) return // too short or too vertical
+    setActiveTab(prev => {
+      const idx = TAB_ORDER.indexOf(prev)
+      if (idx < 0) return prev
+      if (dx < 0 && idx < TAB_ORDER.length - 1) return TAB_ORDER[idx + 1] // swipe left → next
+      if (dx > 0 && idx > 0) return TAB_ORDER[idx - 1] // swipe right → prev
+      return prev
+    })
+  }, [])
   const [selectedTargets, setSelectedTargets] = useState<CommandTarget[]>([])
   const [insights, setInsights] = useState<DailyInsights | null>(null)
   const [insightDates, setInsightDates] = useState<string[]>([])
@@ -258,7 +283,7 @@ export function DashboardPage({
       </div>
 
       {/* Tab Content */}
-      <div className="min-h-[400px]">
+      <div className="min-h-[400px]" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
 
         {activeTab === "kanban" && (
           <ProjectKanbanTab
@@ -1029,9 +1054,15 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
 
   const agentIdSet = useMemo(() => new Set(agents.map(a => a.id)), [agents])
 
-  const activeCards = allCards.filter(a => !archived.has(a.id))
+  // Separate disabled bots (from DB bot_status field)
+  const disabledIds = useMemo(() => new Set(
+    agents.filter(a => (a as any).bot_status === 'disabled').map(a => a.id)
+  ), [agents])
+  const enabledCards = allCards.filter(a => !archived.has(a.id) && !disabledIds.has(a.id))
+  const disabledCards = allCards.filter(a => !archived.has(a.id) && disabledIds.has(a.id))
   const archivedCards = allCards.filter(a => archived.has(a.id))
   const [allExpanded, setAllExpanded] = useState(true) // default: all expanded
+  const [showDisabled, setShowDisabled] = useState(false)
 
   return (
     <div className="space-y-3">
@@ -1050,7 +1081,7 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
           </div>
           {/* Active bots */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {activeCards.map((agent) => (
+            {enabledCards.map((agent) => (
               <BotCard
                 key={agent.id}
                 agent={agent}
@@ -1070,6 +1101,44 @@ function BotFleetTab({ dashboard, loading, selectedTargets, onToggleTarget, onOp
               />
             ))}
           </div>
+
+          {/* Disabled bots (from MM) */}
+          {disabledCards.length > 0 && (
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => setShowDisabled(!showDisabled)}
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 transition-colors"
+              >
+                <span className="h-2 w-2 rounded-full bg-zinc-600" />
+                <span>\u5df2\u7981\u7528 ({disabledCards.length})</span>
+                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showDisabled && "rotate-180")} />
+              </button>
+              {showDisabled && (
+                <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 opacity-40">
+                  {disabledCards.map((agent) => (
+                    <BotCard
+                      key={agent.id}
+                      agent={agent}
+                      selected={false}
+                      onToggle={() => {}}
+                      onOpenProject={onOpenProject}
+                      onOpenBot={onOpenBot}
+                      onArchive={() => toggleArchive(agent.id)}
+                      isArchived={false}
+                      botSummary={botSummaryMap[agent.id]}
+                      isVirtual={!agentIdSet.has(agent.id)}
+                      virtualEmoji={(agent as any)._emoji}
+                      forceExpanded={false}
+                      liveStatus={botStatuses[agent.id]}
+                      insightDate={insightDate}
+                      idle={true}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Archived section */}
           {archivedCards.length > 0 && (

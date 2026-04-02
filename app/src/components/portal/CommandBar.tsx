@@ -283,7 +283,7 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
     return (
       <div className="fixed inset-x-0 bottom-0 z-50 pointer-events-none p-4 flex justify-center">
         <button
-          onClick={() => { setDirectChatActive(true); setExpanded(true); }}
+          onClick={() => { setDirectChatActive(true); setExpanded(true); setTimeout(() => inputRef.current?.focus(), 150); }}
           className="pointer-events-auto shadow-xl shadow-black/40 flex items-center gap-2 rounded-full border border-zinc-700 bg-[#18181b] px-4 py-2.5 text-sm font-medium text-zinc-300 hover:border-emerald-500/50 hover:text-emerald-300 hover:scale-105 transition-all"
         >
           <MessageSquare className="h-4 w-4" />
@@ -307,7 +307,7 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
       )}
 
       <div className="flex h-full flex-col justify-end">
-        <div className="mx-auto w-full max-w-3xl overflow-hidden rounded-t-2xl border border-b-0 border-zinc-700/60 bg-[#111113]/95 shadow-2xl backdrop-blur-xl sm:mx-auto sm:mb-0">
+        <div className="mx-auto w-full max-w-3xl overflow-hidden border border-b-0 border-zinc-700/60 bg-[#111113]/95 shadow-2xl backdrop-blur-xl sm:mx-auto sm:mb-0">
           
           {/* Header */}
           <div className="flex items-center justify-between border-b border-zinc-800/60 px-4 py-3 bg-[#18181b]/50">
@@ -329,7 +329,7 @@ export function CommandBar({ targets, onClearTarget }: CommandBarProps) {
                   <span className="text-sm font-medium text-zinc-200 truncate">
                     {targets.length > 0 
                       ? `${targets.map(t => t.name).join(", ")}` 
-                      : "Ottor (Direct)"}
+                      : `${fallbackBot?.emoji ?? "🤖"} ${fallbackBot?.name ?? "Bot"}`}
                   </span>
                   {projectCtx && (
                     <button
