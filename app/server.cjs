@@ -91,6 +91,21 @@ const STATUS_LABELS = {
 
 app.use(express.json());
 
+// ── Bearer token authentication ──
+const API_TOKEN = process.env.API_TOKEN || '';
+if (API_TOKEN) {
+  app.use('/api', (req, res, next) => {
+    const auth = req.headers.authorization;
+    if (!auth || auth !== `Bearer ${API_TOKEN}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    next();
+  });
+  console.log('[Auth] Bearer token enabled for /api/*');
+} else {
+  console.log('[Auth] ⚠️ API_TOKEN not set — API is open (dev mode)');
+}
+
 async function dbQuery(sql) {
   const { rows } = await pool.query(sql);
   return rows;

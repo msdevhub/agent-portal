@@ -1,4 +1,5 @@
 const API = '/api'
+const API_TOKEN = (import.meta as any).env?.VITE_API_TOKEN || ''
 
 export interface Artifact {
   id: string
@@ -210,10 +211,15 @@ const LEGACY_STAGE_MAP: Record<string, string> = {
 }
 
 async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
-  const opts: RequestInit = { method }
+  const headers: Record<string, string> = {}
+  if (API_TOKEN) headers['Authorization'] = `Bearer ${API_TOKEN}`
 
   if (body !== undefined) {
-    opts.headers = { 'Content-Type': 'application/json' }
+    headers['Content-Type'] = 'application/json'
+  }
+
+  const opts: RequestInit = { method, headers }
+  if (body !== undefined) {
     opts.body = JSON.stringify(body)
   }
 
