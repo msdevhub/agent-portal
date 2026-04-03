@@ -174,7 +174,7 @@ function ResponseChart({ history }: { history: MonitorHistory[] }) {
 
   return (
     <div className="mt-2">
-      <svg width={width} height={height} className="text-emerald-400">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full max-w-[280px] text-emerald-400" preserveAspectRatio="xMidYMid meet">
         {/* Y axis labels */}
         <text x={padding.left - 4} y={padding.top + 3} className="text-[8px] fill-zinc-500" textAnchor="end">{maxTime}ms</text>
         <text x={padding.left - 4} y={height - padding.bottom} className="text-[8px] fill-zinc-500" textAnchor="end">0</text>
@@ -230,8 +230,8 @@ function MonitorRow({ monitor, expanded, onToggle }: {
         onClick={onToggle}
         className="w-full text-left p-3 flex items-center gap-3 hover:bg-zinc-800/30 transition-colors cursor-pointer"
       >
-        {/* 左侧: 折叠图标 | 状态圆点 | 名字链接 | tag badge */}
-        <div className="flex items-center gap-3 flex-shrink-0">
+        {/* 左侧: 折叠图标 | 状态圆点 | 名字链接 | tag badge — 占 60%+ */}
+        <div className="flex items-center gap-3 flex-1 min-w-0">
           {expanded ? (
             <ChevronDown className="h-3.5 w-3.5 text-zinc-500 flex-shrink-0" />
           ) : (
@@ -247,18 +247,18 @@ function MonitorRow({ monitor, expanded, onToggle }: {
               target="_blank"
               rel="noopener noreferrer"
               onClick={handleNameClick}
-              className="text-sm text-zinc-200 hover:text-emerald-400 hover:underline truncate transition-colors max-w-[140px]"
+              className="text-sm text-zinc-200 hover:text-emerald-400 hover:underline truncate transition-colors"
               title={monitor.target}
             >
               {monitor.name}
             </a>
           ) : (
-            <span className="text-sm text-zinc-200 truncate max-w-[140px]">{monitor.name}</span>
+            <span className="text-sm text-zinc-200 truncate">{monitor.name}</span>
           )}
-          {/* Group tag badge - 低调样式 */}
+          {/* Group tag badge - 低调样式，手机端隐藏 */}
           <span
             className={cn(
-              "text-[9px] px-1.5 py-0 rounded-full flex-shrink-0",
+              "hidden sm:inline text-[9px] px-1.5 py-0 rounded-full flex-shrink-0",
               getGroupTagStyle(monitor.group_name)
             )}
           >
@@ -266,13 +266,23 @@ function MonitorRow({ monitor, expanded, onToggle }: {
           </span>
         </div>
 
-        {/* 右侧: 迷你版 UptimeBar（竖条） */}
-        <div className="flex-1 flex justify-end">
-          {historyLoading ? (
-            <div className="text-[10px] text-zinc-600">加载中...</div>
-          ) : (
-            <MiniUptimeBar history={history} expectedStatus={monitor.expected_status} uptimePct={uptimePct} />
-          )}
+        {/* 右侧: 桌面版显示完整竖条+百分比，手机版只显示百分比 */}
+        <div className="flex-shrink-0 flex items-center justify-end">
+          {/* 手机: 只显示百分比数字 */}
+          <span className={cn(
+            "sm:hidden text-[10px] tabular-nums font-medium",
+            getUptimeColor(uptimePct)
+          )}>
+            {uptimePct.toFixed(1)}%
+          </span>
+          {/* 桌面: 完整 UptimeBar + 百分比 */}
+          <div className="hidden sm:block">
+            {historyLoading ? (
+              <div className="text-[10px] text-zinc-600">加载中...</div>
+            ) : (
+              <MiniUptimeBar history={history} expectedStatus={monitor.expected_status} uptimePct={uptimePct} />
+            )}
+          </div>
         </div>
       </div>
 
