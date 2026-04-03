@@ -69,10 +69,21 @@ digest/                ← Python Digest Pipeline
 | 18790 | Digest trigger server |
 
 ### 数据库
-- PG 直连: `DATABASE_URL=postgresql://agent_portal:AgentP0rtal2026!@localhost:5432/postgres`
-- Supabase REST 回退: https://db.dora.restry.cn
+- PG 直连: `DATABASE_URL` 环境变量 (必填)
 - 所有表以 `AP_` 前缀
 - supabase_admin 拥有的表已 disable RLS
+
+### 环境变量 (必填)
+参见 `.env.example`。后端和 Pipeline 共用以下变量：
+| 变量 | 用途 |
+|------|------|
+| `DATABASE_URL` | PostgreSQL 连接串 |
+| `MM_BASE_URL` | Mattermost 地址 |
+| `MM_ADMIN_TOKEN` | Mattermost admin token |
+| `L1_BASE_URL` | Azure OpenAI endpoint |
+| `L1_API_KEY` | Azure OpenAI key |
+
+⚠️ 不再支持 Supabase REST 回退，所有 secret 不硬编码。缺失则进程启动报错退出。
 
 ### Agent ID 映射 (MM username → Portal ID)
 | MM Username | Portal ID |

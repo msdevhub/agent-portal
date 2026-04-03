@@ -33,7 +33,7 @@ from pipeline.project_insights import (
 )
 from push.notifier import notify_daddy
 from push.pusher import push_activities, push_timeline, sync_bots
-from push.supabase import supabase_request
+
 
 TZ_SHANGHAI = timezone(timedelta(hours=8))
 

@@ -1,40 +1,39 @@
 """
 Agent Portal Digest — Configuration
 
-All secrets read from environment variables.
-Defaults match the current deployment so it works out of the box.
-
+All secrets must be set via environment variables. No hardcoded defaults for secrets.
 To load from a .env file, either `source .env` before running,
 or use python-dotenv in your wrapper script.
 """
 
 import os
+import sys
 from pathlib import Path
 
-# === Mattermost ===
-MM_BASE_URL = os.environ.get("MM_BASE_URL", "https://mm.dora.restry.cn")
+
+def _require_env(name: str) -> str:
+    """Read a required environment variable, exit if missing."""
+    value = os.environ.get(name, "")
+    if not value:
+        print(f"❌ {name} is required but not set. Exiting.", file=sys.stderr)
+        sys.exit(1)
+    return value
+
+
+# === Mattermost (required) ===
+MM_BASE_URL = _require_env("MM_BASE_URL")
 MM_API = f"{MM_BASE_URL}/api/v4"
-MM_ADMIN_TOKEN = os.environ.get("MM_ADMIN_TOKEN", "")
+MM_ADMIN_TOKEN = _require_env("MM_ADMIN_TOKEN")
 DADDY_USER_ID = os.environ.get("DADDY_USER_ID", "8zzs18ha4fdhf8jt8ybm61eqdw")
 TEAM_ID = os.environ.get("MM_TEAM_ID", "x1dtaayrof878chorb6mrj9ana")
 
-# === Database ===
-# Preferred: direct PG connection (set DATABASE_URL)
-# Fallback: Supabase REST (set SUPABASE_URL + SUPABASE_SERVICE_KEY)
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
-
-# === Supabase (fallback when DATABASE_URL is not set) ===
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://db.dora.restry.cn/pg")
-SUPABASE_REST = f"{SUPABASE_URL}/rest/v1"
-SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+# === Database (PostgreSQL direct connection, required) ===
+DATABASE_URL = _require_env("DATABASE_URL")
 
 # === LLM — L1: Structured extraction (gpt-4.1) ===
 L1_PROVIDER = "azure-foundry"
-L1_BASE_URL = os.environ.get(
-    "L1_BASE_URL",
-    "https://resley-east-us-2-resource.cognitiveservices.azure.com/openai/v1/",
-)
-L1_API_KEY = os.environ.get("L1_API_KEY", "")
+L1_BASE_URL = _require_env("L1_BASE_URL")
+L1_API_KEY = _require_env("L1_API_KEY")
 L1_MODEL = os.environ.get("L1_MODEL", "gpt-4.1")
 L1_FALLBACK = os.environ.get("L1_FALLBACK", "gpt-4o")
 

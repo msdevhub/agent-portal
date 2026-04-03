@@ -17,7 +17,6 @@ from datetime import datetime, timezone, timedelta
 
 from config import (
     L1_BASE_URL, L1_API_KEY, L1_MODEL,
-    SUPABASE_REST, SUPABASE_SERVICE_KEY,
     DATA_DIR,
 )
 from pipeline.llm import call_llm, parse_json_response

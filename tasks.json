@@ -6,7 +6,7 @@
     "desc": "设计系统方案（功能、数据模型、页面结构），提交爸爸确认",
     "created": "2026-03-10",
     "updated": "2026-03-14",
-    "notes": "5个开放问题全部确认：部署已完成、认证搁置、API可写、单Agent、数据已迁移"
+    "notes": "5个开放问题全部确认"
   },
   {
     "id": 2,
@@ -14,61 +14,167 @@
     "status": "done",
     "desc": "Vite + React + shadcn/ui + Supabase 实现 POC",
     "created": "2026-03-10",
-    "updated": "2026-03-11",
-    "notes": "v3-shadcn 前端已完成并部署。"
+    "updated": "2026-03-11"
   },
   {
     "id": 3,
     "stage": "poc",
     "status": "done",
-    "desc": "UX 改进 v3.1：文档弹窗、上下文标记、移动端适配、卡片精简",
+    "desc": "UX 改进 v3.1",
     "created": "2026-03-13",
-    "updated": "2026-03-13",
-    "notes": "完成 7 项改进"
+    "updated": "2026-03-13"
   },
   {
     "id": 4,
     "stage": "poc",
     "status": "done",
-    "desc": "架构重构 v3.2：Hash 路由 + 独立详情页 + Tab 导航",
+    "desc": "架构重构 v3.2",
     "created": "2026-03-13",
-    "updated": "2026-03-14",
-    "notes": "HashRouter、首页与详情页分离、移动端统计区折叠、详情页 4 Tab（任务/产出物/上下文/时间线）"
+    "updated": "2026-03-14"
   },
   {
     "id": 5,
     "stage": "poc",
     "status": "done",
-    "desc": "v3.3-v3.4 移动端原生感优化：Gemini 3轮审查 + Codex 全页面紧凑化",
+    "desc": "v3.3-v3.4 移动端优化",
     "created": "2026-03-14",
-    "updated": "2026-03-14",
-    "notes": "Dialog/Tabs/卡片/任务列表全面优化，修复 ArrowLeft import 黑屏 bug，去掉删除线改灰色，删除按钮同行"
+    "updated": "2026-03-14"
   },
   {
     "id": 6,
     "stage": "poc",
     "status": "done",
-    "desc": "创建 project-sync 技能：每小时自动更新项目描述 + 扫描产出物",
+    "desc": "project-sync 技能",
     "created": "2026-03-14",
-    "updated": "2026-03-14",
-    "notes": "skills/project-sync/ 技能 + cron 配置完成，首次同步更新了 3 个项目描述 + 14 个新产出物"
+    "updated": "2026-03-14"
   },
   {
     "id": 7,
     "stage": "poc",
     "status": "done",
-    "desc": "迭代 2/3：继续移动端优化循环（Gemini 审查 → Codex 实施）",
+    "desc": "迭代 2/3 移动端优化",
     "created": "2026-03-14",
-    "updated": "2026-03-14",
-    "notes": ""
+    "updated": "2026-03-14"
   },
   {
     "id": 8,
     "stage": "build",
     "status": "done",
-    "desc": "轻量重构前端页面结构 + 删除重复 README，统一 CONTEXT 为项目单一文档入口",
+    "desc": "轻量重构前端页面结构",
     "created": "2026-03-14",
-    "updated": "2026-03-16",
-    "notes": "按类型分组列表(文档/代码/数据/链接/图片), 去掉阶段Tab切换, 已部署"
+    "updated": "2026-03-16"
+  },
+  {
+    "id": 9,
+    "stage": "build",
+    "status": "in_progress",
+    "desc": "P0-1: digest/push/db.py — 砍掉 Supabase REST 回退，PG 直连 only",
+    "created": "2026-04-03",
+    "updated": "2026-04-03",
+    "notes": ""
+  },
+  {
+    "id": 10,
+    "stage": "build",
+    "status": "pending",
+    "desc": "P0-2: digest/push/supabase.py — 删除 Supabase REST 工具，只保留 resolve_agent_id",
+    "created": "2026-04-03",
+    "updated": "2026-04-03"
+  },
+  {
+    "id": 11,
+    "stage": "build",
+    "status": "pending",
+    "desc": "P0-3: digest/config.py — 删除 Supabase 配置项",
+    "created": "2026-04-03",
+    "updated": "2026-04-03"
+  },
+  {
+    "id": 12,
+    "stage": "build",
+    "status": "pending",
+    "desc": "P0-4: app/server.cjs — 砍掉 Supabase 回退，PG 直连 only",
+    "created": "2026-04-03",
+    "updated": "2026-04-03"
+  },
+  {
+    "id": 13,
+    "stage": "build",
+    "status": "pending",
+    "desc": "P0-5: app/server.cjs — 硬编码 secrets 提取到环境变量，缺失则启动报错",
+    "created": "2026-04-03",
+    "updated": "2026-04-03"
+  },
+  {
+    "id": 14,
+    "stage": "build",
+    "status": "pending",
+    "desc": "P0-6: digest/config.py — 硬编码 secrets 提取到环境变量，缺失则启动报错",
+    "created": "2026-04-03",
+    "updated": "2026-04-03"
+  },
+  {
+    "id": 15,
+    "stage": "build",
+    "status": "pending",
+    "desc": "P0-7: 创建 .env.example 模板 + 更新 CONTEXT.md 文档",
+    "created": "2026-04-03",
+    "updated": "2026-04-03"
+  },
+  {
+    "id": 16,
+    "stage": "build",
+    "status": "pending",
+    "desc": "P0-8: 端到端验证 — Pipeline dry-run + API 健康检查",
+    "created": "2026-04-03",
+    "updated": "2026-04-03"
+  },
+  {
+    "id": 17,
+    "stage": "build",
+    "status": "pending",
+    "desc": "P1-1: 前后端分离 — Caddy 直接 serve dist/，server.cjs 只跑 API (port 3002)",
+    "created": "2026-04-03",
+    "updated": "2026-04-03"
+  },
+  {
+    "id": 18,
+    "stage": "build",
+    "status": "pending",
+    "desc": "P1-2: API 加 Bearer token 认证中间件",
+    "created": "2026-04-03",
+    "updated": "2026-04-03"
+  },
+  {
+    "id": 19,
+    "stage": "build",
+    "status": "pending",
+    "desc": "P2-1: 加 SSE 实时事件通道 (/api/events)",
+    "created": "2026-04-03",
+    "updated": "2026-04-03"
+  },
+  {
+    "id": 20,
+    "stage": "build",
+    "status": "pending",
+    "desc": "P2-2: MM Webhook hot path — 实时事件接收+推送",
+    "created": "2026-04-03",
+    "updated": "2026-04-03"
+  },
+  {
+    "id": 21,
+    "stage": "build",
+    "status": "pending",
+    "desc": "P3-1: Pipeline 通过后端 API 写 DB，不直连",
+    "created": "2026-04-03",
+    "updated": "2026-04-03"
+  },
+  {
+    "id": 22,
+    "stage": "build",
+    "status": "pending",
+    "desc": "P3-2: Trigger server 纳入 pm2 管理",
+    "created": "2026-04-03",
+    "updated": "2026-04-03"
   }
 ]

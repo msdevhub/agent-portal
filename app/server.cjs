@@ -8,21 +8,29 @@ const MIME_TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'imag
 const CHANGELOG_TTL_MS = 5 * 60 * 1000;
 const changelogCache = new Map();
 
-// ── Database ──
-// DATABASE_URL=postgresql://agent_portal:AgentP0rtal2026!@localhost:5432/postgres
+// ── Database (PostgreSQL direct, required) ──
 const DATABASE_URL = process.env.DATABASE_URL;
-const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
-// Legacy Supabase fallback (remove after migration confirmed)
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://db.dora.restry.cn';
-const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJzZXJ2aWNlX3JvbGUiLAogICAgImlzcyI6ICJzdXBhYmFzZS1kZW1vIiwKICAgICJpYXQiOiAxNjQxNzY5MjAwLAogICAgImV4cCI6IDE3OTk1MzU2MDAKfQ.DaYlNEoUrrEn2Ig7tqibS-PHK5vgusbcbo7X36XVt4Q';
+if (!DATABASE_URL) {
+  console.error('❌ DATABASE_URL is required but not set. Exiting.');
+  process.exit(1);
+}
+const pool = new Pool({ connectionString: DATABASE_URL });
 
-// ── Portal Chat (Mattermost DM as @dora via admin token) ──
-const MM_ADMIN_TOKEN = process.env.MM_ADMIN_TOKEN || 'ygw5qt86hi8p3r917j7khe3ogc';
-const MM_ADMIN_USER_ID = '8zzs18ha4fdhf8jt8ybm61eqdw'; // @dora
+// ── Mattermost integration (required) ──
+const MM_ADMIN_TOKEN = process.env.MM_ADMIN_TOKEN;
+if (!MM_ADMIN_TOKEN) {
+  console.error('❌ MM_ADMIN_TOKEN is required but not set. Exiting.');
+  process.exit(1);
+}
+const MM_BASE_URL = process.env.MM_BASE_URL;
+if (!MM_BASE_URL) {
+  console.error('❌ MM_BASE_URL is required but not set. Exiting.');
+  process.exit(1);
+}
+const MM_ADMIN_USER_ID = process.env.MM_ADMIN_USER_ID || '8zzs18ha4fdhf8jt8ybm61eqdw'; // @dora
 // Legacy aliases for backward compat
 const PORTAL_OPS_TOKEN = MM_ADMIN_TOKEN;
 const PORTAL_OPS_USER_ID = MM_ADMIN_USER_ID;
-const MM_BASE_URL = process.env.MM_BASE_URL || 'https://mm.dora.restry.cn';
 
 // ── MM Bot User Cache (for merging daily_reports bots) ──
 const mmBotUserCache = {};
@@ -86,50 +94,13 @@ app.use(express.json());
 app.use(express.static(STATIC_ROOT));
 
 async function dbQuery(sql) {
-  if (pool) {
-    const { rows } = await pool.query(sql);
-    return rows;
-  }
-  // Supabase HTTP fallback
-  const res = await fetch(`${SUPABASE_URL}/pg/rest/v1/rpc/run_sql`, {
-    method: 'POST',
-    headers: {
-      apikey: SERVICE_KEY,
-      Authorization: `Bearer ${SERVICE_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query: sql }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`DB error (${res.status}): ${text.slice(0, 300)}`);
-  }
-
-  return res.json();
+  const { rows } = await pool.query(sql);
+  return rows;
 }
 
 // For DDL statements (CREATE TABLE/INDEX etc) that don't return rows
 async function dbExec(sql) {
-  if (pool) {
-    await pool.query(sql);
-    return;
-  }
-  // Supabase HTTP fallback
-  const res = await fetch(`${SUPABASE_URL}/pg/rest/v1/rpc/exec_sql`, {
-    method: 'POST',
-    headers: {
-      apikey: SERVICE_KEY,
-      Authorization: `Bearer ${SERVICE_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ sql }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`DB exec error (${res.status}): ${text.slice(0, 300)}`);
-  }
+  await pool.query(sql);
 }
 
 function esc(value) {
