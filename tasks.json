@@ -67,7 +67,7 @@
   {
     "id": 9,
     "stage": "build",
-    "status": "in_progress",
+    "status": "done",
     "desc": "P0-1: digest/push/db.py — 砍掉 Supabase REST 回退，PG 直连 only",
     "created": "2026-04-03",
     "updated": "2026-04-03",
@@ -76,7 +76,7 @@
   {
     "id": 10,
     "stage": "build",
-    "status": "pending",
+    "status": "done",
     "desc": "P0-2: digest/push/supabase.py — 删除 Supabase REST 工具，只保留 resolve_agent_id",
     "created": "2026-04-03",
     "updated": "2026-04-03"
@@ -84,7 +84,7 @@
   {
     "id": 11,
     "stage": "build",
-    "status": "pending",
+    "status": "done",
     "desc": "P0-3: digest/config.py — 删除 Supabase 配置项",
     "created": "2026-04-03",
     "updated": "2026-04-03"
@@ -92,7 +92,7 @@
   {
     "id": 12,
     "stage": "build",
-    "status": "pending",
+    "status": "done",
     "desc": "P0-4: app/server.cjs — 砍掉 Supabase 回退，PG 直连 only",
     "created": "2026-04-03",
     "updated": "2026-04-03"
@@ -100,7 +100,7 @@
   {
     "id": 13,
     "stage": "build",
-    "status": "pending",
+    "status": "done",
     "desc": "P0-5: app/server.cjs — 硬编码 secrets 提取到环境变量，缺失则启动报错",
     "created": "2026-04-03",
     "updated": "2026-04-03"
@@ -108,7 +108,7 @@
   {
     "id": 14,
     "stage": "build",
-    "status": "pending",
+    "status": "done",
     "desc": "P0-6: digest/config.py — 硬编码 secrets 提取到环境变量，缺失则启动报错",
     "created": "2026-04-03",
     "updated": "2026-04-03"
@@ -116,7 +116,7 @@
   {
     "id": 15,
     "stage": "build",
-    "status": "pending",
+    "status": "done",
     "desc": "P0-7: 创建 .env.example 模板 + 更新 CONTEXT.md 文档",
     "created": "2026-04-03",
     "updated": "2026-04-03"
@@ -124,15 +124,16 @@
   {
     "id": 16,
     "stage": "build",
-    "status": "pending",
+    "status": "done",
     "desc": "P0-8: 端到端验证 — Pipeline dry-run + API 健康检查",
     "created": "2026-04-03",
-    "updated": "2026-04-03"
+    "updated": "2026-04-03",
+    "notes": "API 200, 前端 200, 外网 200, Pipeline DB直连OK, LLM 401是Azure key过期"
   },
   {
     "id": 17,
     "stage": "build",
-    "status": "pending",
+    "status": "in_progress",
     "desc": "P1-1: 前后端分离 — Caddy 直接 serve dist/，server.cjs 只跑 API (port 3002)",
     "created": "2026-04-03",
     "updated": "2026-04-03"

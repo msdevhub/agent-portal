@@ -3,7 +3,7 @@ const path = require('path');
 const { Pool } = require('pg');
 
 const app = express();
-const PORT = process.env.PORT || 3013;
+const PORT = process.env.PORT || 3002;
 const MIME_TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 const CHANGELOG_TTL_MS = 5 * 60 * 1000;
 const changelogCache = new Map();
@@ -89,9 +89,7 @@ const STATUS_LABELS = {
   archived: '已归档',
 };
 
-const STATIC_ROOT = process.env.STATIC_DIR || path.join(__dirname, 'dist');
 app.use(express.json());
-app.use(express.static(STATIC_ROOT));
 
 async function dbQuery(sql) {
   const { rows } = await pool.query(sql);
@@ -2900,16 +2898,9 @@ app.get('/api/incidents', async (req, res) => {
   }
 });
 
-// SPA fallback: serve index.html for all non-API routes
-const _spaIndexPath = path.resolve(__dirname, 'dist', 'index.html');
-const _spaIndexHtml = require('fs').readFileSync(_spaIndexPath, 'utf-8');
-app.get('{*path}', (req, res) => {
-  res.type('html').send(_spaIndexHtml);
-});
-
 app.listen(PORT, () => {
-  console.log(`Agent Portal running on http://localhost:${PORT}`);
-  console.log(`Database: ${pool ? 'PostgreSQL direct ✅' : 'Supabase REST (legacy)'}`);
+  console.log(`Agent Portal API running on http://localhost:${PORT}`);
+  console.log(`Database: PostgreSQL direct ✅`);
   console.log(`Workspace root: ${WORKSPACE_ROOT}`);
   console.log(`Sync interval: ${SYNC_INTERVAL_MS / 1000}s`);
 
