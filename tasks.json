@@ -133,7 +133,7 @@
   {
     "id": 17,
     "stage": "build",
-    "status": "in_progress",
+    "status": "done",
     "desc": "P1-1: 前后端分离 — Caddy 直接 serve dist/，server.cjs 只跑 API (port 3002)",
     "created": "2026-04-03",
     "updated": "2026-04-03"
@@ -141,7 +141,7 @@
   {
     "id": 18,
     "stage": "build",
-    "status": "pending",
+    "status": "done",
     "desc": "P1-2: API 加 Bearer token 认证中间件",
     "created": "2026-04-03",
     "updated": "2026-04-03"
@@ -149,33 +149,37 @@
   {
     "id": 19,
     "stage": "build",
-    "status": "pending",
+    "status": "done",
     "desc": "P2-1: 加 SSE 实时事件通道 (/api/events)",
     "created": "2026-04-03",
-    "updated": "2026-04-03"
+    "updated": "2026-04-03",
+    "notes": "SSE 已存在 /api/ops/stream, 新增 digest_done 事件"
   },
   {
     "id": 20,
     "stage": "build",
-    "status": "pending",
+    "status": "done",
     "desc": "P2-2: MM Webhook hot path — 实时事件接收+推送",
     "created": "2026-04-03",
-    "updated": "2026-04-03"
+    "updated": "2026-04-03",
+    "notes": "MM WebSocket hot path 已存在, 新增 typing/posted → SSE 广播"
   },
   {
     "id": 21,
     "stage": "build",
-    "status": "pending",
+    "status": "done",
     "desc": "P3-1: Pipeline 通过后端 API 写 DB，不直连",
     "created": "2026-04-03",
-    "updated": "2026-04-03"
+    "updated": "2026-04-03",
+    "notes": "保持 Pipeline PG 直连, 新增 /api/digest/done 回调通知前端刷新"
   },
   {
     "id": 22,
     "stage": "build",
-    "status": "pending",
+    "status": "done",
     "desc": "P3-2: Trigger server 纳入 pm2 管理",
     "created": "2026-04-03",
-    "updated": "2026-04-03"
+    "updated": "2026-04-03",
+    "notes": "pm2 start digest-trigger, 替代手动 nohup"
   }
 ]

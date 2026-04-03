@@ -61,12 +61,12 @@ digest/                ← Python Digest Pipeline
 ```
 
 ### 服务端口
-| 端口 | 用途 |
-|------|------|
-| 3002 | server.cjs (PORT=3002 启动, Caddy /api/* 指向) |
-| 3013 | pm2 serve 静态 dist (Caddy 主站指向) |
-| 4013 | Vite dev server (调试用) |
-| 18790 | Digest trigger server |
+| 端口 | 用途 | pm2 名称 |
+|------|------|----------|
+| 3002 | server.cjs API only | portal-api |
+| 3013 | pm2 serve 静态 dist (SPA) | portal-static |
+| 4013 | Vite dev server (调试用) | — |
+| 18790 | Digest trigger server | digest-trigger |
 
 ### 数据库
 - PG 直连: `DATABASE_URL` 环境变量 (必填)
