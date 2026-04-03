@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Activity, AlertTriangle, ChevronDown, ChevronRight, ExternalLink, Plus } from "lucide-react"
+import { Activity, AlertTriangle, ChevronDown, ChevronRight, Container, ExternalLink, Plus, Server } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   fetchMonitorUptime,
   fetchMonitorHistory,
   fetchIncidents,
+  fetchServers,
   createMonitor,
   type MonitorUptime,
   type MonitorHistory,
   type Incident,
+  type ServerSnapshot,
 } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import {
@@ -266,24 +268,13 @@ function MonitorRow({ monitor, expanded, onToggle }: {
           </span>
         </div>
 
-        {/* 右侧: 桌面版显示完整竖条+百分比，手机版只显示百分比 */}
-        <div className="flex-shrink-0 flex items-center justify-end">
-          {/* 手机: 只显示百分比数字 */}
-          <span className={cn(
-            "sm:hidden text-[10px] tabular-nums font-medium",
-            getUptimeColor(uptimePct)
-          )}>
-            {uptimePct.toFixed(1)}%
-          </span>
-          {/* 桌面: 完整 UptimeBar + 百分比 */}
-          <div className="hidden sm:block">
-            {historyLoading ? (
-              <div className="text-[10px] text-zinc-600">加载中...</div>
-            ) : (
-              <MiniUptimeBar history={history} expectedStatus={monitor.expected_status} uptimePct={uptimePct} />
-            )}
-          </div>
-        </div>
+        {/* 右侧: 只显示百分比数字，竖条移到展开详情里 */}
+        <span className={cn(
+          "flex-shrink-0 text-[11px] tabular-nums font-medium",
+          getUptimeColor(uptimePct)
+        )}>
+          {uptimePct.toFixed(1)}%
+        </span>
       </div>
 
       {/* 展开详情 */}
@@ -311,6 +302,15 @@ function MonitorRow({ monitor, expanded, onToggle }: {
             )}>
               {monitor.group_name ?? "其他"}
             </span>
+          </div>
+
+          {/* Uptime 竖条 (展开时显示) */}
+          <div className="mt-3">
+            {historyLoading ? (
+              <div className="text-[10px] text-zinc-600">加载中...</div>
+            ) : (
+              <MiniUptimeBar history={history} expectedStatus={monitor.expected_status} uptimePct={uptimePct} />
+            )}
           </div>
 
           {/* ResponseChart */}
@@ -551,22 +551,116 @@ function AddMonitorDialog({ onCreated }: { onCreated: () => void }) {
   )
 }
 
+/* ═══════════════════ ContainerMonitorSection ═══════════════════ */
+
+function ContainerMonitorSection({ servers }: { servers: ServerSnapshot[] }) {
+  const [expandedServer, setExpandedServer] = useState<string | null>(null)
+
+  // Only show servers that have Docker containers
+  const serversWithContainers = useMemo(() => {
+    return servers
+      .filter(s => s.services && s.services.some(svc => svc.type === "docker"))
+      .sort((a, b) => {
+        // Sort: servers with non-running containers first
+        const aDown = a.services.filter(s => s.type === "docker" && s.status !== "running").length
+        const bDown = b.services.filter(s => s.type === "docker" && s.status !== "running").length
+        if (aDown !== bDown) return bDown - aDown
+        return a.name.localeCompare(b.name)
+      })
+  }, [servers])
+
+  if (serversWithContainers.length === 0) return null
+
+  return (
+    <div className="pt-2 border-t border-zinc-800/60">
+      <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
+        <Container className="h-3 w-3" />
+        容器服务
+      </div>
+      <div className="space-y-1">
+        {serversWithContainers.map(server => {
+          const dockerSvcs = server.services.filter(s => s.type === "docker")
+          const running = dockerSvcs.filter(s => s.status === "running").length
+          const total = dockerSvcs.length
+          const allOk = running === total
+          const expanded = expandedServer === server.name
+
+          return (
+            <div key={server.name} className="rounded-lg border border-zinc-800/60 bg-[#0c0c0e]/50">
+              <div
+                onClick={() => setExpandedServer(expanded ? null : server.name)}
+                className="w-full text-left p-2.5 flex items-center gap-2.5 hover:bg-zinc-800/30 transition-colors cursor-pointer"
+              >
+                {expanded ? (
+                  <ChevronDown className="h-3 w-3 text-zinc-500 flex-shrink-0" />
+                ) : (
+                  <ChevronRight className="h-3 w-3 text-zinc-500 flex-shrink-0" />
+                )}
+                <Server className="h-3.5 w-3.5 text-zinc-500 flex-shrink-0" />
+                <span className="text-sm text-zinc-200 truncate flex-1 min-w-0">{server.name}</span>
+                <span className={cn(
+                  "text-[10px] tabular-nums font-medium flex-shrink-0",
+                  allOk ? "text-emerald-400" : "text-rose-400"
+                )}>
+                  {running}/{total}
+                </span>
+              </div>
+
+              {expanded && (
+                <div className="px-3 pb-2.5 border-t border-zinc-800/40">
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {dockerSvcs
+                      .sort((a, b) => {
+                        if (a.status === b.status) return a.name.localeCompare(b.name)
+                        return a.status === "running" ? 1 : -1
+                      })
+                      .map(svc => (
+                        <span
+                          key={svc.name}
+                          className={cn(
+                            "inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border",
+                            svc.status === "running"
+                              ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-400"
+                              : "border-rose-500/30 bg-rose-500/10 text-rose-400"
+                          )}
+                        >
+                          <span className={cn(
+                            "h-1.5 w-1.5 rounded-full flex-shrink-0",
+                            svc.status === "running" ? "bg-emerald-400" : "bg-rose-400"
+                          )} />
+                          {svc.name}
+                        </span>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 /* ═══════════════════ MonitorPanel (Main Export) ═══════════════════ */
 
 export function MonitorPanel() {
   const [uptimeData, setUptimeData] = useState<MonitorUptime[]>([])
   const [incidents, setIncidents] = useState<Incident[]>([])
+  const [servers, setServers] = useState<ServerSnapshot[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<number | null>(null)
 
   const loadData = useCallback(async () => {
     try {
-      const [uptime, incs] = await Promise.all([
+      const [uptime, incs, srvs] = await Promise.all([
         fetchMonitorUptime(7),
         fetchIncidents({ limit: 10 }),
+        fetchServers().catch(() => []),
       ])
       setUptimeData(uptime ?? [])
       setIncidents(incs ?? [])
+      setServers(srvs ?? [])
     } catch (e) {
       console.error("Failed to load monitor data:", e)
     } finally {
@@ -621,6 +715,9 @@ export function MonitorPanel() {
             ))}
           </div>
         )}
+
+        {/* Container Services from Server Snapshots */}
+        <ContainerMonitorSection servers={servers} />
 
         {/* Recent Incidents */}
         <div className="pt-2 border-t border-zinc-800/60">

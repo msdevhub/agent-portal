@@ -704,6 +704,8 @@ export interface Incident {
   cause: string | null
 }
 
+export const fetchServers = () => api<ServerSnapshot[]>('/servers')
+
 export const fetchMonitors = (filters?: { type?: string; group?: string; enabled?: boolean }) => {
   const params = new URLSearchParams()
   if (filters?.type) params.set('type', filters.type)
