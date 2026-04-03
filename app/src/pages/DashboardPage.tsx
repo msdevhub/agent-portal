@@ -201,6 +201,10 @@ export function DashboardPage({
       } catch { /* ignore */ }
     }
     es.addEventListener('bot_status', handler)
+    es.addEventListener('digest_done', () => {
+      // Dispatch a custom event so App-level can re-fetch data
+      window.dispatchEvent(new CustomEvent('portal:digest-done'))
+    })
     return () => {
       es.removeEventListener('bot_status', handler)
       es.close()

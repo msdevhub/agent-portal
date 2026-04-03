@@ -152,6 +152,16 @@ function App() {
     })()
   }, [loadOverview, showError])
 
+  // Auto-refresh when Pipeline completes (SSE → custom event)
+  useEffect(() => {
+    const handler = () => {
+      void loadOverview()
+      void loadDashboard("refresh")
+    }
+    window.addEventListener('portal:digest-done', handler)
+    return () => window.removeEventListener('portal:digest-done', handler)
+  }, [loadOverview, loadDashboard])
+
   // Load dashboard data on mount + auto-refresh
   useEffect(() => {
     void loadDashboard("initial", dashboardAsOf)

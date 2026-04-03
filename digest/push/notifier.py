@@ -142,11 +142,35 @@ def notify_daddy(date_str: str, project_updates: list, all_projects: list):
             msg += f" • {u.get('project_name', '?')}\n"
         msg += "\n"
 
-    msg += f"👉 [在门户查看](https://portal.nexora.restry.cn)"
+    msg += f"👉 [在门户查看](https://portal.dev.dora.restry.cn)"
 
     channel = _get_daddy_dm_channel()
     _send_mm(channel, msg)
     print(f"  📬 已通知 Daddy（{time_str}）")
+
+    # Notify Portal backend to broadcast SSE refresh
+    _notify_portal_done(date_str, len(project_updates), total_active)
+
+
+def _notify_portal_done(date_str: str, projects_updated: int, bots_active: int):
+    """POST to Portal API so it broadcasts an SSE refresh to all clients."""
+    try:
+        data = json.dumps({
+            "date": date_str,
+            "projects_updated": projects_updated,
+            "bots_active": bots_active,
+        }).encode()
+        req = urllib.request.Request(
+            "http://localhost:3002/api/digest/done",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            resp.read()
+        print("  📡 Portal SSE 刷新已触发")
+    except Exception as e:
+        print(f"  ⚠️ Portal 通知失败 (非关键): {e}")
 
 
 def _send_mm(channel_id: str, message: str):

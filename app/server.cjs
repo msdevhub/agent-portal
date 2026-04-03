@@ -2719,6 +2719,19 @@ app.post('/api/digest/refresh', async (req, res) => {
   }
 });
 
+// ── Pipeline completion callback (broadcast SSE to all clients) ──
+app.post('/api/digest/done', (req, res) => {
+  const { date, projects_updated, bots_active } = req.body || {};
+  broadcastSSE('digest_done', {
+    date: date || new Date().toISOString().slice(0, 10),
+    projects_updated: projects_updated || 0,
+    bots_active: bots_active || 0,
+    timestamp: Date.now(),
+  });
+  console.log(`[digest/done] Pipeline completed for ${date}, broadcasting SSE refresh`);
+  res.json({ ok: true });
+});
+
 // ── Project Sort Order (via metadata JSONB) ──
 app.put('/api/ap-projects/sort-order', async (req, res) => {
   try {
