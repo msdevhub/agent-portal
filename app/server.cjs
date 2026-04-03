@@ -605,6 +605,17 @@ app.get('/api/dashboard', async (req, res) => {
       return t > max ? t : max;
     }, 0);
 
+    // Pick the most recent timestamp across all data sources
+    let latestOverall = latestSnapshot;
+    try {
+      const [projMax] = await dbQuery(`SELECT MAX(updated_at) as t FROM "AP_projects"`);
+      const [actMax]  = await dbQuery(`SELECT MAX(created_at) as t FROM "AP_daily_activities"`);
+      for (const row of [projMax, actMax]) {
+        const t = row?.t ? new Date(row.t).getTime() : 0;
+        if (t > latestOverall) latestOverall = t;
+      }
+    } catch (_) { /* non-critical */ }
+
     res.json({
       summary: {
         production: { total: productionSites.length, up: prodUp },
@@ -619,8 +630,8 @@ app.get('/api/dashboard', async (req, res) => {
       cron_jobs: cronList,
       agents: agentList,
       servers,
-      updated_at: latestSnapshot ? new Date(latestSnapshot).toISOString() : null,
-      as_of: at || (latestSnapshot ? new Date(latestSnapshot).toISOString() : null),
+      updated_at: latestOverall ? new Date(latestOverall).toISOString() : null,
+      as_of: at || (latestOverall ? new Date(latestOverall).toISOString() : null),
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
